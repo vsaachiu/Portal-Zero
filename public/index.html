@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal Zero Login</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .hidden { display: none; }
+        #message-box { margin-top: 20px; font-size: 1.5rem; font-weight: bold; }
+        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h1>Welcome to Portal Zero</h1>
+    
+    <div id="login-section">
+        <button id="login-btn">Log in with Google</button>
+    </div>
+
+    <div id="content-section" class="hidden">
+        <div id="message-box"></div>
+        <br>
+        <button id="logout-btn">Log Out</button>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyDyPikK4D7pJyo3np-HafYH9LmOkv1kp2E",
+          authDomain: "vsa-portal-zero-p0.firebaseapp.com",
+          projectId: "vsa-portal-zero-p0",
+          storageBucket: "vsa-portal-zero-p0.firebasestorage.app",
+          messagingSenderId: "311864812480",
+          appId: "1:311864812480:web:7760d44c4a2c740f2d1e25",
+          measurementId: "G-BV9CJP9XPZ"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        // DOM Elements
+        const loginBtn = document.getElementById('login-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        const loginSection = document.getElementById('login-section');
+        const contentSection = document.getElementById('content-section');
+        const messageBox = document.getElementById('message-box');
+
+        // Handle Login
+        loginBtn.addEventListener('click', () => {
+            signInWithPopup(auth, provider).catch(error => {
+                console.error("Error signing in:", error);
+                alert("Login failed. Please try again.");
+            });
+        });
+
+        // Handle Logout
+        logoutBtn.addEventListener('click', () => {
+            signOut(auth).then(() => {
+                messageBox.innerText = "";
+            });
+        });
+
+        // Monitor Authentication State
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // User is signed in, check the domain
+                loginSection.classList.add('hidden');
+                contentSection.classList.remove('hidden');
+
+                const email = user.email;
+
+                if (email.endsWith('@vsa.edu.hk')) {
+                    messageBox.innerText = "Hello VSA Staff!";
+                    messageBox.style.color = "blue";
+                } else if (email.endsWith('@student.vsa.edu.hk')) {
+                    messageBox.innerText = "Hello VSA Student!";
+                    messageBox.style.color = "green";
+                } else {
+                    messageBox.innerText = "Access Denied: Unrecognized Domain.";
+                    messageBox.style.color = "red";
+                    // Optionally force sign out here if they aren't authorized at all
+                    // signOut(auth);
+                }
+            } else {
+                // User is signed out
+                loginSection.classList.remove('hidden');
+                contentSection.classList.add('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
