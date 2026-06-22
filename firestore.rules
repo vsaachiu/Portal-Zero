@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAdmin() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/admin_users/$(request.auth.token.email));
+    }
+
+    match /admin_users/{adminEmail} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    match /teachers/{teacherEmail} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    match /TeacherProfile/{teacherEmail} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin() || (request.auth != null && request.auth.token.email == teacherEmail);
+    }
+
+    match /students/{studentEmail} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin() || (request.auth != null && request.auth.token.email.matches('.*@vsa\\.edu\\.hk$'));
+    }
+
+    match /sets/{setId} {
+      allow read, write: if request.auth != null && (isAdmin() || request.auth.token.email == resource.data.owner || request.auth.token.email == request.resource.data.owner);
+    }
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

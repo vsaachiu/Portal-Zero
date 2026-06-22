@@ -3,26 +3,149 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portal Zero Login</title>
+    <title>Portal Zero</title>
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .hidden { display: none; }
-        #message-box { margin-top: 20px; font-size: 1.5rem; font-weight: bold; }
-        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f4f7f6; 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 100vh; 
+        }
+        .hidden { display: none !important; }
+
+        /* Login Container */
+        #login-section { 
+            background: white; 
+            padding: 40px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+            text-align: center; 
+        }
+        #login-section h1 { margin-top: 0; color: #333; }
+        #login-btn { 
+            background-color: #4285f4; 
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            font-size: 1rem; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            transition: background 0.3s; 
+        }
+        #login-btn:hover { background-color: #357ae8; }
+
+        /* Generic Message Container */
+        #message-section {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        /* Dashboard Container */
+        #dashboard-section { 
+            width: 100%; 
+            max-width: 1000px; 
+            padding: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 20px; 
+            align-items: stretch;
+            justify-content: flex-start;
+        }
+        
+        .dashboard-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
+        }
+        .dashboard-header h2 { margin: 0; color: #333; }
+        .logout-btn { 
+            background-color: #e53935; 
+            color: white; 
+            border: none; 
+            padding: 8px 16px; 
+            font-size: 0.9rem; 
+            border-radius: 4px; 
+            cursor: pointer; 
+        }
+
+        /* Dashboard Cards */
+        .dashboard-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 20px; 
+        }
+        .dashboard-card { 
+            background: white; 
+            padding: 40px 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
+            text-align: center; 
+            cursor: pointer; 
+            transition: transform 0.2s, box-shadow 0.2s; 
+            border-top: 4px solid #1976d2;
+        }
+        .dashboard-card:hover { 
+            transform: translateY(-5px); 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+        }
+        .dashboard-card h3 { margin: 0 0 10px 0; color: #1976d2; font-size: 1.5rem; }
+        .dashboard-card p { color: #666; margin: 0; }
+        
+        /* Message Box for generic messages */
+        #message-box { font-size: 1.2rem; font-weight: bold; margin-bottom: 20px;}
     </style>
 </head>
 <body>
 
-    <h1>Welcome to Portal Zero</h1>
-    
+    <!-- Login Area -->
     <div id="login-section">
+        <h1>Welcome to Portal Zero</h1>
+        <p>Experimental Features Portal</p>
         <button id="login-btn">Log in with Google</button>
     </div>
 
-    <div id="content-section" class="hidden">
+    <!-- Generic messages (students, unauthorized) -->
+    <div id="message-section" class="hidden">
         <div id="message-box"></div>
-        <br>
-        <button id="logout-btn">Log Out</button>
+        <button id="logout-btn-msg" class="logout-btn">Log Out</button>
+    </div>
+
+    <!-- Teacher Dashboard Area -->
+    <div id="dashboard-section" class="hidden">
+        <div class="dashboard-header">
+            <h2>Portal Zero Dashboard</h2>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <span id="user-greeting" style="color: #666; font-weight: 500;"></span>
+                <button id="logout-btn-dash" class="logout-btn">Log Out</button>
+            </div>
+        </div>
+        
+        <div class="dashboard-grid">
+            <div class="dashboard-card">
+                <h3>Classes</h3>
+                <p>Manage your classes, students, and schedules.</p>
+            </div>
+            <div class="dashboard-card">
+                <h3>Activities</h3>
+                <p>Plan and track student activities and assignments.</p>
+            </div>
+            <div class="dashboard-card">
+                <h3>Productivity</h3>
+                <p>Tools to help organize your tasks and daily workflow.</p>
+            </div>
+        </div>
     </div>
 
     <script type="module">
@@ -46,10 +169,13 @@
 
         // DOM Elements
         const loginBtn = document.getElementById('login-btn');
-        const logoutBtn = document.getElementById('logout-btn');
+        const logoutBtnMsg = document.getElementById('logout-btn-msg');
+        const logoutBtnDash = document.getElementById('logout-btn-dash');
         const loginSection = document.getElementById('login-section');
-        const contentSection = document.getElementById('content-section');
+        const messageSection = document.getElementById('message-section');
+        const dashboardSection = document.getElementById('dashboard-section');
         const messageBox = document.getElementById('message-box');
+        const userGreeting = document.getElementById('user-greeting');
 
         // Handle Login
         loginBtn.addEventListener('click', () => {
@@ -60,37 +186,54 @@
         });
 
         // Handle Logout
-        logoutBtn.addEventListener('click', () => {
+        const handleLogout = () => {
             signOut(auth).then(() => {
                 messageBox.innerText = "";
+                userGreeting.innerText = "";
             });
-        });
+        };
+        logoutBtnMsg.addEventListener('click', handleLogout);
+        logoutBtnDash.addEventListener('click', handleLogout);
 
         // Monitor Authentication State
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                // User is signed in, check the domain
+                // Hide login
                 loginSection.classList.add('hidden');
-                contentSection.classList.remove('hidden');
-
+                
                 const email = user.email;
 
                 if (email.endsWith('@vsa.edu.hk')) {
-                    messageBox.innerText = "Hello VSA Staff!";
-                    messageBox.style.color = "blue";
-                } else if (email.endsWith('@student.vsa.edu.hk')) {
-                    messageBox.innerText = "Hello VSA Student!";
-                    messageBox.style.color = "green";
+                    // Show Teacher Dashboard
+                    messageSection.classList.add('hidden');
+                    dashboardSection.classList.remove('hidden');
+                    userGreeting.innerText = `Hello, ${user.displayName || email}`;
+                    
+                    // Allow dashboard layout to work correctly
+                    document.body.style.justifyContent = 'flex-start';
+                    document.body.style.paddingTop = '50px';
                 } else {
-                    messageBox.innerText = "Access Denied: Unrecognized Domain.";
-                    messageBox.style.color = "red";
-                    // Optionally force sign out here if they aren't authorized at all
-                    // signOut(auth);
+                    // Show generic message for students or unauthorized
+                    dashboardSection.classList.add('hidden');
+                    messageSection.classList.remove('hidden');
+                    document.body.style.justifyContent = 'center';
+                    document.body.style.paddingTop = '0';
+                    
+                    if (email.endsWith('@student.vsa.edu.hk')) {
+                        messageBox.innerText = "Student Portal coming soon.";
+                        messageBox.style.color = "green";
+                    } else {
+                        messageBox.innerText = "Access Denied: Unrecognized Domain.";
+                        messageBox.style.color = "red";
+                    }
                 }
             } else {
                 // User is signed out
                 loginSection.classList.remove('hidden');
-                contentSection.classList.add('hidden');
+                messageSection.classList.add('hidden');
+                dashboardSection.classList.add('hidden');
+                document.body.style.justifyContent = 'center';
+                document.body.style.paddingTop = '0';
             }
         });
     </script>
