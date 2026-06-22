@@ -28,7 +28,7 @@ export const createFolder = async (name, parentId, token) => {
   return await response.json(); // returns { id, name, ... }
 };
 
-export const addPermission = async (fileId, emailAddress, role, token) => {
+export const addPermission = async (fileId, emailAddress, role, token, sendNotificationEmail = false) => {
   // role: 'owner', 'writer', 'commenter', 'reader'
   const body = {
     type: 'user',
@@ -36,7 +36,15 @@ export const addPermission = async (fileId, emailAddress, role, token) => {
     emailAddress: emailAddress,
   };
 
-  const response = await fetch(`${DRIVE_API_URL}/${fileId}/permissions?transferOwnership=${role === 'owner'}`, {
+  // Drive API requires notification emails for ownership transfer.
+  const shouldNotify = role === 'owner' ? true : sendNotificationEmail;
+
+  const params = new URLSearchParams({
+    transferOwnership: String(role === 'owner'),
+    sendNotificationEmail: String(shouldNotify),
+  });
+
+  const response = await fetch(`${DRIVE_API_URL}/${fileId}/permissions?${params.toString()}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -59,7 +67,7 @@ export const copyFile = async (fileId, parentId, name, token) => {
     parents: parentId ? [parentId] : undefined,
   };
 
-  const response = await fetch(`${DRIVE_API_URL}/${fileId}/copy`, {
+  const response = await fetch(`${DRIVE_API_URL}/${fileId}/copy?fields=id,name,mimeType,webViewLink`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -74,4 +82,68 @@ export const copyFile = async (fileId, parentId, name, token) => {
   }
 
   return await response.json();
+};
+
+export const getFileMetadata = async (fileId, token) => {
+  const response = await fetch(`${DRIVE_API_URL}/${fileId}?fields=id,name,mimeType,webViewLink`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error?.message || 'Failed to fetch file metadata');
+  }
+
+  return await response.json();
+};
+
+export const getFileRevisionSummary = async (fileId, token) => {
+  let pageToken;
+  let revisionCount = 0;
+  let latestRevision = null;
+
+  do {
+    const params = new URLSearchParams({
+      pageSize: '200',
+      fields: 'nextPageToken,revisions(id,modifiedTime,lastModifyingUser(displayName,emailAddress))',
+    });
+
+    if (pageToken) {
+      params.set('pageToken', pageToken);
+    }
+
+    const response = await fetch(`${DRIVE_API_URL}/${fileId}/revisions?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error?.message || 'Failed to fetch file revisions');
+    }
+
+    const data = await response.json();
+    const revisions = data.revisions || [];
+    revisionCount += revisions.length;
+
+    for (const revision of revisions) {
+      if (!latestRevision || new Date(revision.modifiedTime) > new Date(latestRevision.modifiedTime)) {
+        latestRevision = revision;
+      }
+    }
+
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return {
+    revisionCount,
+    lastEditedAt: latestRevision?.modifiedTime || null,
+    lastEditedBy: latestRevision?.lastModifyingUser?.displayName || null,
+    lastEditedByEmail: latestRevision?.lastModifyingUser?.emailAddress || null,
+  };
 };

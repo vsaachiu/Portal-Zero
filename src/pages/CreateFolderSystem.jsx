@@ -4,6 +4,7 @@ import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { getDriveToken, createFolder, addPermission } from '../driveApi';
+import { useDrivePicker } from '../useDrivePicker';
 
 export default function CreateFolderSystem() {
   const { currentUser, profile } = useAuth();
@@ -20,10 +21,13 @@ export default function CreateFolderSystem() {
   const [folderPrefix, setFolderPrefix] = useState('');
   const [folderSuffix, setFolderSuffix] = useState('');
   const [shareWithParents, setShareWithParents] = useState(false);
+  const [notifyUsers, setNotifyUsers] = useState(false);
   const [students, setStudents] = useState([]);
   const [selectedStudentEmails, setSelectedStudentEmails] = useState(new Set());
   const [progress, setProgress] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
+
+  const { openPicker, isReady } = useDrivePicker();
 
   useEffect(() => {
     async function fetchSets() {
@@ -133,6 +137,7 @@ export default function CreateFolderSystem() {
         folderPrefix,
         folderSuffix,
         shareWithParents,
+        notifyUsers,
         createdAt: serverTimestamp()
       });
 
@@ -146,11 +151,11 @@ export default function CreateFolderSystem() {
           const driveFolder = await createFolder(folderName, parsedRootId, token);
           
           // Add student permission
-          await addPermission(driveFolder.id, student.email, 'writer', token);
+          await addPermission(driveFolder.id, student.email, 'writer', token, notifyUsers);
           
           // Add parent permission if enabled and parentEmail exists
           if (shareWithParents && student.parentEmail) {
-            await addPermission(driveFolder.id, student.parentEmail, 'reader', token);
+            await addPermission(driveFolder.id, student.parentEmail, 'reader', token, notifyUsers);
           }
 
           // Save record
@@ -217,14 +222,26 @@ export default function CreateFolderSystem() {
         {step === 3 && (
           <div>
             <h2 className="text-xl font-bold mb-4">Step 3: Root Google Drive Folder</h2>
-            <p className="text-sm text-gray-500 mb-2">Paste the URL or ID of the Google Drive folder where student subfolders will be created.</p>
-            <input 
-              type="text" 
-              className="w-full border p-2 rounded" 
-              placeholder="Folder URL or ID"
-              value={rootFolderId}
-              onChange={(e) => setRootFolderId(e.target.value)}
-            />
+            <p className="text-sm text-gray-500 mb-2">Paste the URL or ID of the Google Drive folder where student subfolders will be created, or browse Drive to select one.</p>
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                className="flex-1 border p-2 rounded" 
+                placeholder="Folder URL or ID"
+                value={rootFolderId}
+                onChange={(e) => setRootFolderId(e.target.value)}
+              />
+              <button
+                className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300 transition whitespace-nowrap"
+                onClick={() => openPicker({ 
+                  type: 'folder', 
+                  onSelect: (folder) => setRootFolderId(folder.id) 
+                })}
+                disabled={!isReady}
+              >
+                Browse Drive
+              </button>
+            </div>
           </div>
         )}
 
@@ -244,6 +261,10 @@ export default function CreateFolderSystem() {
             <label className="flex items-center">
               <input type="checkbox" className="mr-2" checked={shareWithParents} onChange={e => setShareWithParents(e.target.checked)} />
               Share folders with parents (Read-Only)
+            </label>
+            <label className="flex items-center mt-2">
+              <input type="checkbox" className="mr-2" checked={notifyUsers} onChange={e => setNotifyUsers(e.target.checked)} />
+              Notify users by email when sharing
             </label>
             <div className="mt-4 p-4 bg-gray-50 text-sm text-gray-600 rounded">
               Preview: {folderPrefix ? folderPrefix + ' ' : ''}John Doe{folderSuffix ? ' ' + folderSuffix : ''}

@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
-import { getDriveToken, copyFile, addPermission } from '../driveApi';
+import { getDriveToken, copyFile, addPermission, getFileMetadata } from '../driveApi';
+import { useDrivePicker } from '../useDrivePicker';
 
 export default function DistributeTemplate() {
   const { currentUser } = useAuth();
@@ -22,11 +23,14 @@ export default function DistributeTemplate() {
   const [filePrefix, setFilePrefix] = useState('');
   const [fileSuffix, setFileSuffix] = useState('');
   const [permissionType, setPermissionType] = useState('inherit_folder'); // 'inherit_folder', 'viewer', 'commenter'
+  const [notifyUsers, setNotifyUsers] = useState(false);
   
   const [students, setStudents] = useState([]);
   const [selectedStudentEmails, setSelectedStudentEmails] = useState(new Set());
   const [progress, setProgress] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
+
+  const { openPicker, isReady } = useDrivePicker();
 
   useEffect(() => {
     async function fetchSystems() {
@@ -112,8 +116,20 @@ export default function DistributeTemplate() {
   };
 
   const parseFileId = (input) => {
-    const match = input.match(/d\/([a-zA-Z0-9_-]+)/);
-    return match ? match[1] : input;
+    if (!input) return '';
+
+    const trimmed = input.trim();
+
+    // Covers docs/slides/sheets/file URLs like .../d/<id>/...
+    const pathMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (pathMatch) return pathMatch[1];
+
+    // Covers drive URLs like ...open?id=<id> or ...?id=<id>
+    const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (queryMatch) return queryMatch[1];
+
+    // Assume already a raw file ID
+    return trimmed;
   };
 
   const executeDistribution = async () => {
@@ -144,6 +160,7 @@ export default function DistributeTemplate() {
         templateName,
         distributionName: `${filePrefix} [Student] ${fileSuffix}`.trim(),
         permissionType,
+        notifyUsers,
         createdAt: serverTimestamp()
       });
 
@@ -159,13 +176,19 @@ export default function DistributeTemplate() {
           // Copy File to Student's Folder
           const copiedFile = await copyFile(parsedFileId, student.folderId, fileName, token);
           newFileId = copiedFile.id;
-          newFileUrl = `https://docs.google.com/document/d/${newFileId}/edit`; // Assumes doc
+          newFileUrl = copiedFile.webViewLink || null;
+
+          // Fallback fetch for reliable open URL across all Drive file types.
+          if (!newFileUrl) {
+            const metadata = await getFileMetadata(newFileId, token);
+            newFileUrl = metadata.webViewLink || `https://drive.google.com/file/d/${newFileId}/view`;
+          }
           
           // Modify permission if needed
           if (permissionType === 'viewer') {
-             await addPermission(newFileId, student.email, 'reader', token);
+             await addPermission(newFileId, student.email, 'reader', token, notifyUsers);
           } else if (permissionType === 'commenter') {
-             await addPermission(newFileId, student.email, 'commenter', token);
+             await addPermission(newFileId, student.email, 'commenter', token, notifyUsers);
           }
 
         } catch (studentErr) {
@@ -204,14 +227,29 @@ export default function DistributeTemplate() {
         {step === 1 && (
           <div>
             <h2 className="text-xl font-bold mb-4">Step 1: Select Template</h2>
-            <p className="text-sm text-gray-500 mb-2">Paste the URL or ID of the Google Doc template.</p>
-            <input 
-              type="text" 
-              className="w-full border p-2 rounded mb-4" 
-              placeholder="Google Doc URL or ID"
-              value={templateFileId}
-              onChange={(e) => setTemplateFileId(e.target.value)}
-            />
+            <p className="text-sm text-gray-500 mb-2">Paste the URL or ID of a Google Drive file (Docs, Slides, Sheets, etc.), or browse Drive to select one.</p>
+            <div className="flex gap-2 mb-4">
+              <input 
+                type="text" 
+                className="flex-1 border p-2 rounded" 
+                placeholder="Google Drive file URL or ID"
+                value={templateFileId}
+                onChange={(e) => setTemplateFileId(e.target.value)}
+              />
+              <button
+                className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300 transition whitespace-nowrap"
+                onClick={() => openPicker({ 
+                  type: 'file', 
+                  onSelect: (file) => {
+                    setTemplateFileId(file.id);
+                    setTemplateName(file.name);
+                  } 
+                })}
+                disabled={!isReady}
+              >
+                Browse Drive
+              </button>
+            </div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Friendly Name</label>
             <input 
               type="text" 
@@ -260,6 +298,15 @@ export default function DistributeTemplate() {
                 <option value="commenter">Commenter Only</option>
               </select>
             </div>
+            <label className="flex items-center mb-4">
+              <input
+                type="checkbox"
+                className="mr-2"
+                checked={notifyUsers}
+                onChange={e => setNotifyUsers(e.target.checked)}
+              />
+              Notify users by email when sharing
+            </label>
             <div className="mt-4 p-4 bg-gray-50 text-sm text-gray-600 rounded">
               Preview: {filePrefix ? filePrefix + ' ' : ''}John Doe{fileSuffix ? ' ' + fileSuffix : ''}
             </div>
