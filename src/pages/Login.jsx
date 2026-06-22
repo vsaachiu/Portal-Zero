@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { signInWithPopup } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth, provider } from '../firebase';
 import { useAuth } from '../AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -18,7 +18,11 @@ export default function Login() {
 
   const handleLogin = async () => {
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential && credential.accessToken) {
+        localStorage.setItem('googleDriveAccessToken', credential.accessToken);
+      }
     } catch (error) {
       console.error("Login Error:", error);
     }

@@ -78,6 +78,46 @@ Authentication handles logins from the Google provider. Upon successful login, t
 *   `tags`: Array of Strings (e.g., `["Grade 10", "Math", "HL"]`)
 *   `members`: Array of Strings (List of student email strings acting as foreign keys referencing the `students` collection)
 
+### Collection: `dd_folder_systems` (Doc Distributor: Google Drive Folders)
+*   *Document ID:* `systemId` (Auto-generated)
+*   `setId`: String (Foreign key to `sets`)
+*   `systemName`: String
+*   `teacherEmail`: String (Owner/Creator)
+*   `isCentral`: Boolean
+*   `rootFolderId`: String (Google Drive ID)
+*   `rootFolderUrl`: String
+*   `folderPrefix`: String
+*   `folderSuffix`: String
+*   `shareWithParents`: Boolean
+*   `createdAt`: Timestamp
+
+### Collection: `dd_student_folders` (Doc Distributor: Student Folders)
+*   *Document ID:* Auto-generated
+*   `systemId`: String (Foreign key to `dd_folder_systems`)
+*   `setId`: String
+*   `studentEmail`: String (Foreign key)
+*   `folderId`: String (Google Drive ID)
+*   `folderUrl`: String
+
+### Collection: `dd_distributions` (Doc Distributor: Distribution Events)
+*   *Document ID:* `distributionId` (Auto-generated)
+*   `systemId`: String (Target folder system)
+*   `setId`: String (Foreign key to `sets`)
+*   `teacherEmail`: String
+*   `templateFileId`: String
+*   `templateName`: String
+*   `distributionName`: String
+*   `permissionType`: String (`"inherit_folder"`, `"viewer"`, `"commenter"`)
+*   `createdAt`: Timestamp
+
+### Collection: `dd_distributed_files` (Doc Distributor: Copied Files)
+*   *Document ID:* Auto-generated
+*   `distributionId`: String (Foreign key to `dd_distributions`)
+*   `studentEmail`: String
+*   `fileId`: String (Drive ID)
+*   `fileUrl`: String
+*   `status`: String (`"success"`, `"error"`)
+
 ---
 
 ## 4. Security Rules Configuration (`firestore.rules`)
@@ -108,6 +148,20 @@ service cloud.firestore {
     
     match /{document=**} {
       allow read, write: if false;
+    }
+    
+    // Doc Distributor Module Rules
+    match /dd_folder_systems/{systemId} {
+      allow read, write: if request.auth != null && (isAdmin() || request.auth.token.email == resource.data.teacherEmail || request.auth.token.email == request.resource.data.teacherEmail);
+    }
+    match /dd_student_folders/{folderId} {
+      allow read, write: if request.auth != null && isAdmin(); // Should be updated based on systemId owner
+    }
+    match /dd_distributions/{distributionId} {
+      allow read, write: if request.auth != null && (isAdmin() || request.auth.token.email == resource.data.teacherEmail || request.auth.token.email == request.resource.data.teacherEmail);
+    }
+    match /dd_distributed_files/{fileId} {
+      allow read, write: if request.auth != null; // Refined rules needed
     }
   }
 }
