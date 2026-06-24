@@ -35,7 +35,7 @@ export const useDrivePicker = () => {
     });
   }, []);
 
-  const openPicker = ({ type = 'folder', onSelect }) => {
+  const openPicker = ({ type = 'folder', mimeTypes, onSelect }) => {
     if (!pickerApiLoaded || !window.google || !window.google.picker) {
       alert('Google Picker API is not fully loaded yet. Please wait a moment and try again.');
       return;
@@ -60,6 +60,10 @@ export const useDrivePicker = () => {
       view = new window.google.picker.DocsView(window.google.picker.ViewId.DOCS)
         .setIncludeFolders(false)
         .setSelectFolderEnabled(false);
+
+      if (mimeTypes) {
+        view.setMimeTypes(mimeTypes);
+      }
     }
 
     const picker = new window.google.picker.PickerBuilder()

@@ -1,7 +1,140 @@
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3/files';
+const SHEETS_API_URL = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 export const getDriveToken = () => {
   return localStorage.getItem('googleDriveAccessToken');
+};
+
+export const parseGoogleFileId = (input) => {
+  if (!input) return '';
+  const trimmed = input.trim();
+
+  const pathMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (pathMatch) return pathMatch[1];
+
+  const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (queryMatch) return queryMatch[1];
+
+  return trimmed;
+};
+
+export const downloadCsvFile = (rows, fileName = 'export.csv') => {
+  const escapeCell = (value) => {
+    const text = value == null ? '' : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const csv = rows.map((row) => row.map(escapeCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+export const createSpreadsheet = async (title, firstSheetTitle, token) => {
+  const response = await fetch(SHEETS_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      properties: { title },
+      sheets: [
+        {
+          properties: {
+            title: firstSheetTitle,
+          },
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error?.message || 'Failed to create spreadsheet');
+  }
+
+  const data = await response.json();
+  return {
+    spreadsheetId: data.spreadsheetId,
+    spreadsheetUrl: data.spreadsheetUrl,
+  };
+};
+
+export const getSpreadsheetSheetTitles = async (spreadsheetId, token) => {
+  const response = await fetch(`${SHEETS_API_URL}/${spreadsheetId}?fields=sheets(properties(title))`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error?.message || 'Failed to fetch spreadsheet metadata');
+  }
+
+  const data = await response.json();
+  return (data.sheets || []).map((sheet) => sheet.properties?.title).filter(Boolean);
+};
+
+export const addSheetToSpreadsheet = async (spreadsheetId, sheetTitle, token) => {
+  const response = await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: sheetTitle,
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error?.message || 'Failed to add sheet tab');
+  }
+
+  return await response.json();
+};
+
+export const writeSheetValues = async (spreadsheetId, sheetTitle, rows, token) => {
+  const range = `${sheetTitle}!A1`;
+  const response = await fetch(
+    `${SHEETS_API_URL}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        majorDimension: 'ROWS',
+        values: rows,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error?.message || 'Failed to write sheet values');
+  }
+
+  return await response.json();
 };
 
 export const createFolder = async (name, parentId, token) => {
