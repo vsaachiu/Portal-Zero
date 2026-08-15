@@ -1,139 +1,60 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { coordinateDistance, ImageMap, isImageQuestion, parseCoordinates, WordCloud } from './QuickPollHelpers';
 
 export default function QuickPollsSession() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const [session, setSession] = useState(null);
   const [setData, setSetData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadSession = async () => {
-    try {
-      const sessionRef = doc(db, 'qpollSessions', sessionId);
-      const sessionSnap = await getDoc(sessionRef);
-      if (!sessionSnap.exists()) {
-        navigate('/quick-polls');
-        return;
-      }
-
-      const sessionData = { id: sessionSnap.id, ...sessionSnap.data() };
-      setSession(sessionData);
-
-      const setRef = doc(db, 'qpollSets', sessionData.setId);
-      const setSnap = await getDoc(setRef);
-      const nextSetData = setSnap.exists() ? { id: setSnap.id, ...setSnap.data() } : null;
-      setSetData(nextSetData);
-
-      if (!sessionData.activeQuestionId && nextSetData?.questions?.length) {
-        await updateDoc(sessionRef, { activeQuestionId: nextSetData.questions[0].id, interactionMode: 'polling' });
-        setSession((prev) => ({
-          ...prev,
-          activeQuestionId: nextSetData.questions[0].id,
-          interactionMode: 'polling',
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading quick poll session:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [responses, setResponses] = useState([]);
 
   useEffect(() => {
-    loadSession();
-  }, [sessionId]);
+    if (!sessionId) return undefined;
+    return onSnapshot(doc(db, 'qpollSessions', sessionId), (snapshot) => {
+      if (!snapshot.exists()) return navigate('/quick-polls');
+      setSession({ id: snapshot.id, ...snapshot.data() });
+    }, (error) => console.error('Error fetching quick poll session:', error));
+  }, [sessionId, navigate]);
 
-  const updateSession = async (updates) => {
-    if (!sessionId) return;
-    await updateDoc(doc(db, 'qpollSessions', sessionId), updates);
-    setSession((prev) => ({ ...prev, ...updates }));
-  };
+  useEffect(() => {
+    if (!session?.setId) return undefined;
+    return onSnapshot(doc(db, 'qpollSets', session.setId), (snapshot) => {
+      setSetData(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null);
+    }, (error) => console.error('Error fetching poll set:', error));
+  }, [session?.setId]);
 
-  const moveQuestion = async (direction) => {
-    if (!setData?.questions?.length) return;
+  const activeQuestion = useMemo(() => setData?.questions?.find((question) => question.id === session?.activeQuestionId) || null, [setData, session?.activeQuestionId]);
 
-    const currentQuestions = setData.questions;
-    const activeIndex = currentQuestions.findIndex((question) => question.id === session.activeQuestionId);
-    let nextIndex = activeIndex;
-
-    if (activeIndex === -1 && direction === 1) {
-      nextIndex = 0;
-    } else if (activeIndex === -1 && direction === -1) {
-      nextIndex = currentQuestions.length - 1;
-    } else {
-      nextIndex = Math.max(0, Math.min(currentQuestions.length - 1, activeIndex + direction));
+  useEffect(() => {
+    if (!activeQuestion || !sessionId) {
+      setResponses([]);
+      return undefined;
     }
+    const responseQuery = query(collection(db, 'qpollResponses'), where('sessionId', '==', sessionId), where('questionId', '==', activeQuestion.id));
+    return onSnapshot(responseQuery, (snapshot) => setResponses(snapshot.docs.map((response) => ({ id: response.id, ...response.data() }))), (error) => console.error('Error fetching responses:', error));
+  }, [sessionId, activeQuestion?.id]);
 
-    const nextQuestion = currentQuestions[nextIndex];
-    await updateSession({
-      activeQuestionId: nextQuestion?.id || null,
-      interactionMode: 'polling',
-    });
+  const updateSession = (updates) => updateDoc(doc(db, 'qpollSessions', sessionId), updates);
+  const moveQuestion = (direction) => {
+    if (!setData?.questions?.length || !session) return;
+    const questions = setData.questions;
+    const currentIndex = questions.findIndex((question) => question.id === session.activeQuestionId);
+    const nextIndex = Math.max(0, Math.min(questions.length - 1, (currentIndex < 0 ? 0 : currentIndex) + direction));
+    return updateSession({ activeQuestionId: questions[nextIndex].id, interactionMode: 'polling' });
   };
 
-  const toggleLive = async () => {
-    const nextLive = !session.live;
-    await updateSession({ live: nextLive });
-    if (nextLive && !session.activeQuestionId && setData?.questions?.length) {
-      await updateSession({ activeQuestionId: setData.questions[0].id, interactionMode: 'polling' });
-    }
-  };
+  const rankedResponses = useMemo(() => responses.map((response) => ({ ...response, distance: coordinateDistance(response.answer, activeQuestion?.answer) })).filter((response) => response.distance !== null).sort((left, right) => left.distance - right.distance).slice(0, 20), [responses, activeQuestion?.answer]);
+  if (!session || !setData) return <div className="p-8 text-center">Loading session...</div>;
 
-  const toggleMode = async () => {
-    const nextMode = session.interactionMode === 'polling' ? 'review' : 'polling';
-    await updateSession({ interactionMode: nextMode });
-  };
+  const imageQuestion = isImageQuestion(activeQuestion);
+  const answerCoordinates = parseCoordinates(activeQuestion?.answer);
+  const reviewing = session.interactionMode === 'review';
 
-  if (loading) {
-    return <div className="p-8 text-center">Loading session...</div>;
-  }
-
-  const activeQuestion = setData?.questions?.find((question) => question.id === session.activeQuestionId) || null;
-
-  return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex justify-between items-center mb-3">
-            <h1 className="text-2xl font-bold">Quick Poll Live Session</h1>
-            <button onClick={() => navigate('/quick-polls')} className="text-blue-600 hover:underline">Back</button>
-          </div>
-
-          <div className="bg-blue-50 border-l-4 border-blue-600 p-4 rounded mb-4">
-            <div className="text-sm uppercase tracking-wide text-blue-700">Join Code</div>
-            <div className="text-4xl font-bold text-blue-800">{session.joinCode}</div>
-          </div>
-
-          <div className="flex gap-3 flex-wrap">
-            <button onClick={toggleLive} className={`px-4 py-2 rounded ${session.live ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}>
-              {session.live ? 'Stop Live' : 'Start Live'}
-            </button>
-            <button onClick={toggleMode} className="bg-gray-800 text-white px-4 py-2 rounded">
-              Set {session.interactionMode === 'polling' ? 'Review' : 'Polling'} Mode
-            </button>
-            <button onClick={() => moveQuestion(-1)} className="bg-gray-200 px-4 py-2 rounded">Previous</button>
-            <button onClick={() => moveQuestion(1)} className="bg-gray-200 px-4 py-2 rounded">Next</button>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-500 mb-2">Set: {setData?.name}</div>
-          <div className="text-sm text-gray-500 mb-4">Live: {session.live ? 'On' : 'Off'} • Mode: {session.interactionMode}</div>
-
-          {activeQuestion ? (
-            <>
-              <h2 className="text-2xl font-bold mb-2">{activeQuestion.title}</h2>
-              <p className="text-gray-700 whitespace-pre-line">{activeQuestion.text}</p>
-              <div className="mt-4 text-sm text-gray-500">Type: {activeQuestion.type}</div>
-            </>
-          ) : (
-            <p className="text-gray-500">No question is active yet.</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="min-h-screen bg-gray-100 p-5 md:p-8"><div className="mx-auto max-w-6xl">
+    <div className="mb-5 rounded-lg bg-white p-6 shadow"><div className="flex items-center justify-between gap-4"><h1 className="text-2xl font-bold">Quick Poll Live Session</h1><button onClick={() => navigate('/quick-polls')} className="text-blue-600 hover:underline">Back</button></div><div className="mt-4 grid gap-4 md:grid-cols-2"><div className="rounded border-l-4 border-blue-600 bg-blue-50 p-4"><div className="text-sm uppercase text-blue-700">Join Code</div><div className="text-4xl font-bold text-blue-800">{session.joinCode}</div></div><div className="rounded border bg-gray-50 p-4"><div className="text-sm uppercase text-gray-600">Audience Link</div><div className="mt-1 break-all text-sm font-medium">{window.location.origin}/quick-polls/join</div></div></div><div className="mt-4 flex flex-wrap gap-3"><button onClick={() => updateSession({ live: !session.live })} className={`rounded px-4 py-2 text-white ${session.live ? 'bg-red-500' : 'bg-green-600'}`}>{session.live ? 'Stop Live' : 'Start Live'}</button><button onClick={() => updateSession({ interactionMode: reviewing ? 'polling' : 'review' })} className="rounded bg-gray-800 px-4 py-2 text-white">Set {reviewing ? 'Polling' : 'Review'} Mode</button><button onClick={() => moveQuestion(-1)} className="rounded bg-gray-200 px-4 py-2">Previous</button><button onClick={() => moveQuestion(1)} className="rounded bg-gray-200 px-4 py-2">Next</button></div></div>
+    {activeQuestion ? <div className="rounded-lg bg-white p-6 shadow"><div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600"><span>Set: {setData.name}</span><span className="rounded bg-blue-100 px-3 py-1 font-semibold text-blue-800">{responses.length} {responses.length === 1 ? 'answer' : 'answers'}</span></div><div className="mt-5 text-center"><div className="text-sm font-semibold uppercase text-gray-500">{reviewing ? 'Review Mode' : 'Polling Mode'}</div><h2 className="mt-2 text-3xl font-bold md:text-5xl">{activeQuestion.title}</h2><p className="mx-auto mt-4 max-w-4xl whitespace-pre-line text-lg text-gray-700 md:text-2xl">{activeQuestion.text}</p></div>{imageQuestion && activeQuestion.df1_url && <div className="mx-auto mt-6 max-w-5xl"><ImageMap src={activeQuestion.df1_url} alt="Poll question" markers={reviewing ? [...responses.map((response) => ({ coordinates: parseCoordinates(response.answer), color: 'bg-blue-600', label: response.displayName })).filter((marker) => marker.coordinates), ...(answerCoordinates ? [{ coordinates: answerCoordinates, color: 'bg-green-600', label: 'Correct answer' }] : [])] : []} /></div>}{reviewing && (imageQuestion ? <div className="mt-8"><h3 className="mb-3 text-xl font-bold">Top 20 closest responses</h3><div className="overflow-x-auto rounded border"><table className="w-full text-left"><thead className="bg-gray-100 text-sm text-gray-600"><tr><th className="p-3">Rank</th><th className="p-3">Name</th><th className="p-3">Distance</th></tr></thead><tbody>{rankedResponses.map((response, index) => <tr key={response.id} className="border-t"><td className="p-3">{index + 1}</td><td className="p-3">{response.displayName}</td><td className="p-3">{response.distance.toFixed(2)}%</td></tr>)}</tbody></table></div></div> : <div className="mt-8 space-y-6"><div><h3 className="mb-3 text-xl font-bold">Word cloud</h3><WordCloud responses={responses} /></div><div><h3 className="mb-3 text-xl font-bold">Responses</h3><div className="space-y-2">{responses.map((response) => <div key={response.id} className="rounded border p-3"><span className="font-semibold">{response.displayName}: </span>{response.answer}</div>)}</div></div></div>)}</div> : <div className="rounded-lg bg-white p-8 text-center shadow">No question is active yet.</div>}
+  </div></div>;
 }
