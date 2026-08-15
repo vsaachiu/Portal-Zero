@@ -1,9 +1,19 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { getDriveToken, getFileRevisionSummary } from '../driveApi';
+import {
+  addSheetToSpreadsheet,
+  createSpreadsheet,
+  downloadCsvFile,
+  getDriveToken,
+  getFileRevisionSummary,
+  getSpreadsheetSheetTitles,
+  parseGoogleFileId,
+  writeSheetValues,
+} from '../driveApi';
+import { useDrivePicker } from '../useDrivePicker';
 
 export default function DocDistributorDashboard() {
   const [activeTab, setActiveTab] = useState('classes');
@@ -16,9 +26,16 @@ export default function DocDistributorDashboard() {
   const [expandedSetModes, setExpandedSetModes] = useState({});
   const [expandedActivities, setExpandedActivities] = useState({});
   const [checkingActivityKey, setCheckingActivityKey] = useState(null);
+  const [exportSetId, setExportSetId] = useState(null);
+  const [exportMode, setExportMode] = useState('csv');
+  const [existingSheetInput, setExistingSheetInput] = useState('');
+  const [newSpreadsheetTitle, setNewSpreadsheetTitle] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const { currentUser } = useAuth();
+  const { openPicker, isReady: isPickerReady } = useDrivePicker();
 
   const OpenIcon = () => (
     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -30,14 +47,22 @@ export default function DocDistributorDashboard() {
     </svg>
   );
 
-  const getTimestampMs = (value) => {
+  const ExportIcon = () => (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M4 19h16" />
+    </svg>
+  );
+
+  const getTimestampMs = useCallback((value) => {
     if (!value) return 0;
     if (typeof value?.toMillis === 'function') return value.toMillis();
     const parsed = new Date(value).getTime();
     return Number.isNaN(parsed) ? 0 : parsed;
-  };
+  }, []);
 
-  const choosePreferredFile = (existing, candidate) => {
+  const choosePreferredFile = useCallback((existing, candidate) => {
     if (!existing) return candidate;
 
     if (existing.status !== 'success' && candidate.status === 'success') {
@@ -51,13 +76,10 @@ export default function DocDistributorDashboard() {
     }
 
     return existing;
-  };
+  }, [getTimestampMs]);
 
   const fetchData = useCallback(async () => {
     if (!currentUser?.email) return;
-
-    setLoading(true);
-    setError(null);
 
     try {
       const qSets = query(
@@ -91,8 +113,10 @@ export default function DocDistributorDashboard() {
         Array.from(allEmails).map(async (email) => {
           const studentRef = doc(db, 'students', email);
           const studentSnap = await getDoc(studentRef);
-          const displayName = studentSnap.exists() ? (studentSnap.data().displayName || email) : email;
-          return [email, { email, displayName }];
+          const studentData = studentSnap.exists() ? studentSnap.data() : {};
+          const displayName = studentData.displayName || email;
+          const studentId = studentData.studentID || studentData.studentId || '';
+          return [email, { email, displayName, studentId }];
         })
       );
       setStudentsByEmail(Object.fromEntries(studentEntries));
@@ -132,9 +156,10 @@ export default function DocDistributorDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [currentUser, choosePreferredFile]);
   
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, [fetchData]);
 
@@ -160,7 +185,7 @@ export default function DocDistributorDashboard() {
       items.sort((a, b) => getTimestampMs(b.createdAt) - getTimestampMs(a.createdAt));
     });
     return grouped;
-  }, [distributions]);
+  }, [distributions, getTimestampMs]);
 
   const toggleSetMode = (setId, mode) => {
     setExpandedSetModes((prev) => {
@@ -276,6 +301,115 @@ export default function DocDistributorDashboard() {
     }
   };
 
+  const selectedExportSet = useMemo(
+    () => sets.find((setItem) => setItem.id === exportSetId) || null,
+    [sets, exportSetId]
+  );
+
+  const openExportModal = (setItem) => {
+    setExportSetId(setItem.id);
+    setExportMode('csv');
+    setExistingSheetInput('');
+    setNewSpreadsheetTitle(`${setItem.name || setItem.id} Export`);
+    setExportError(null);
+  };
+
+  const closeExportModal = () => {
+    setExportSetId(null);
+    setExportError(null);
+  };
+
+  const buildSetExportRows = (setItem) => {
+    const members = setItem.members || [];
+    const setDistributions = distributionsBySet[setItem.id] || [];
+
+    const distributionColumns = setDistributions.map((distribution, index) => {
+      const label = distribution.templateName || 'Template';
+      return `Distribution ${index + 1}: ${label}`;
+    });
+
+    const header = ['Student Display Name', 'StudentId', 'Student Email', ...distributionColumns];
+
+    const bodyRows = members.map((email) => {
+      const student = studentsByEmail[email] || {};
+      const row = [student.displayName || email, student.studentId || '', email];
+
+      setDistributions.forEach((distribution) => {
+        const distributionKey = getDistributionKey(distribution);
+        const fileRecord = distributedFilesByDistribution[distributionKey]?.[email];
+        row.push(fileRecord?.fileUrl || '');
+      });
+
+      return row;
+    });
+
+    return {
+      setName: setItem.name || setItem.id,
+      rows: [header, ...bodyRows],
+    };
+  };
+
+  const getUniqueSheetTitle = (setName, existingTitles) => {
+    const base = (setName || 'Set Export').trim() || 'Set Export';
+    if (!existingTitles.includes(base)) return base;
+
+    let next = 2;
+    while (existingTitles.includes(`${base} (${next})`)) {
+      next += 1;
+    }
+    return `${base} (${next})`;
+  };
+
+  const exportSetData = async () => {
+    if (!selectedExportSet) return;
+
+    setIsExporting(true);
+    setExportError(null);
+
+    try {
+      const exportPayload = buildSetExportRows(selectedExportSet);
+
+      if (exportMode === 'csv') {
+        const fileName = `${exportPayload.setName.replace(/\s+/g, '_') || 'set'}_members_export.csv`;
+        downloadCsvFile(exportPayload.rows, fileName);
+        closeExportModal();
+        return;
+      }
+
+      const token = getDriveToken();
+      if (!token) {
+        throw new Error('Google Drive access token missing. Please log out and log back in.');
+      }
+
+      if (exportMode === 'existingSheet') {
+        const spreadsheetId = parseGoogleFileId(existingSheetInput);
+        if (!spreadsheetId) {
+          throw new Error('Please enter a Google Sheet URL/ID or choose one from Drive.');
+        }
+
+        const existingTitles = await getSpreadsheetSheetTitles(spreadsheetId, token);
+        const sheetTitle = getUniqueSheetTitle(exportPayload.setName, existingTitles);
+        await addSheetToSpreadsheet(spreadsheetId, sheetTitle, token);
+        await writeSheetValues(spreadsheetId, sheetTitle, exportPayload.rows, token);
+        window.open(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`, '_blank', 'noopener,noreferrer');
+        closeExportModal();
+        return;
+      }
+
+      const spreadsheetTitle = newSpreadsheetTitle.trim() || `${exportPayload.setName} Export`;
+      const sheetTitle = getUniqueSheetTitle(exportPayload.setName, []);
+      const created = await createSpreadsheet(spreadsheetTitle, sheetTitle, token);
+      await writeSheetValues(created.spreadsheetId, sheetTitle, exportPayload.rows, token);
+      window.open(created.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${created.spreadsheetId}/edit`, '_blank', 'noopener,noreferrer');
+      closeExportModal();
+    } catch (err) {
+      console.error(err);
+      setExportError(err.message || 'Failed to export set members.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const renderClassesView = () => {
     if (loading) {
       return <p>Loading classes...</p>;
@@ -317,6 +451,14 @@ export default function DocDistributorDashboard() {
                     </p>
                   </div>
                   <div className="flex gap-2">
+                    <button
+                      className="p-2 rounded bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      onClick={() => openExportModal(setItem)}
+                      title="Export set members"
+                      aria-label={`Export ${setItem.name || setItem.id}`}
+                    >
+                      <ExportIcon />
+                    </button>
                     <button
                       className={`px-3 py-1 rounded text-sm ${mode === 'members' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                       onClick={() => toggleSetMode(setItem.id, 'members')}
@@ -656,6 +798,127 @@ export default function DocDistributorDashboard() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {selectedExportSet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl bg-white rounded-lg shadow-lg">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold">Export Members</h2>
+                <p className="text-sm text-gray-500">Set: {selectedExportSet.name || selectedExportSet.id}</p>
+              </div>
+              <button
+                className="text-gray-500 hover:text-gray-700"
+                onClick={closeExportModal}
+                disabled={isExporting}
+                aria-label="Close export modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-6 py-4 space-y-4">
+              {exportError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                  {exportError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Export Destination</label>
+                <div className="grid sm:grid-cols-3 gap-2">
+                  <button
+                    className={`px-3 py-2 rounded border text-sm ${exportMode === 'csv' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                    onClick={() => setExportMode('csv')}
+                    disabled={isExporting}
+                  >
+                    CSV
+                  </button>
+                  <button
+                    className={`px-3 py-2 rounded border text-sm ${exportMode === 'existingSheet' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                    onClick={() => setExportMode('existingSheet')}
+                    disabled={isExporting}
+                  >
+                    Existing Google Sheet
+                  </button>
+                  <button
+                    className={`px-3 py-2 rounded border text-sm ${exportMode === 'newSheet' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                    onClick={() => setExportMode('newSheet')}
+                    disabled={isExporting}
+                  >
+                    New Google Sheet
+                  </button>
+                </div>
+              </div>
+
+              {exportMode === 'existingSheet' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Google Sheet URL or ID</label>
+                  <p className="text-sm text-gray-500 mb-2">Paste a spreadsheet URL/ID or browse Drive to choose one.</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="flex-1 border p-2 rounded"
+                      placeholder="https://docs.google.com/spreadsheets/d/... or spreadsheet ID"
+                      value={existingSheetInput}
+                      onChange={(e) => setExistingSheetInput(e.target.value)}
+                      disabled={isExporting}
+                    />
+                    <button
+                      className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300 transition whitespace-nowrap disabled:opacity-60"
+                      onClick={() =>
+                        openPicker({
+                          type: 'file',
+                          mimeTypes: 'application/vnd.google-apps.spreadsheet',
+                          onSelect: (file) => setExistingSheetInput(file.id),
+                        })
+                      }
+                      disabled={!isPickerReady || isExporting}
+                    >
+                      Browse Drive
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {exportMode === 'newSheet' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">New Spreadsheet Title</label>
+                  <input
+                    type="text"
+                    className="w-full border p-2 rounded"
+                    placeholder="e.g. Term 1 Set Exports"
+                    value={newSpreadsheetTitle}
+                    onChange={(e) => setNewSpreadsheetTitle(e.target.value)}
+                    disabled={isExporting}
+                  />
+                </div>
+              )}
+
+              <div className="text-xs text-gray-500 border-t pt-3">
+                Export columns: Student Display Name, StudentId, Student Email, and one link column per distribution event.
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-60"
+                onClick={closeExportModal}
+                disabled={isExporting}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                onClick={exportSetData}
+                disabled={isExporting}
+              >
+                {isExporting ? 'Exporting...' : 'Export'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
