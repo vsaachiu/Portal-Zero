@@ -35,10 +35,10 @@ export default function Dashboard() {
             <h3 className="text-xl font-bold text-blue-600 mb-2">Classes (Sets)</h3>
             <p className="text-gray-600">Manage your classes, students, and schedules.</p>
           </Link>
-          <div className="bg-white p-8 rounded-lg shadow border-t-4 border-blue-600 text-center opacity-75 cursor-not-allowed">
-            <h3 className="text-xl font-bold text-blue-600 mb-2">Activities</h3>
-            <p className="text-gray-600">Plan and track student activities and assignments.</p>
-          </div>
+          <Link to="/quick-polls" className="bg-white p-8 rounded-lg shadow border-t-4 border-purple-600 text-center hover:-translate-y-1 hover:shadow-md transition">
+            <h3 className="text-xl font-bold text-purple-600 mb-2">Quick Polls</h3>
+            <p className="text-gray-600">Create live polls, launch sessions, and gather quick student responses.</p>
+          </Link>
           <Link to="/doc-distributor" className="bg-white p-8 rounded-lg shadow border-t-4 border-blue-600 text-center hover:-translate-y-1 hover:shadow-md transition">
             <h3 className="text-xl font-bold text-blue-600 mb-2">Doc Distributor</h3>
             <p className="text-gray-600">Manage Google Drive folders and distribute templates to students.</p>

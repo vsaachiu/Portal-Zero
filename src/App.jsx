@@ -11,6 +11,10 @@ import CreateFolderSystem from './pages/CreateFolderSystem';
 import FolderSystemDetails from './pages/FolderSystemDetails';
 import DistributeTemplate from './pages/DistributeTemplate';
 import DistributionDetails from './pages/DistributionDetails';
+import QuickPollsDashboard from './pages/QuickPollsDashboard';
+import QuickPollsSession from './pages/QuickPollsSession';
+import QuickPollsJoin from './pages/QuickPollsJoin';
+import QuickPollsView from './pages/QuickPollsView';
 
 const PrivateRoute = ({ children, allowedRoles }) => {
   const { currentUser, systemRole } = useAuth();
@@ -73,6 +77,18 @@ function App() {
               <DistributionDetails />
             </PrivateRoute>
           } />
+          <Route path="/quick-polls" element={
+            <PrivateRoute allowedRoles={['Admin', 'Teacher', 'GuestTeacher']}>
+              <QuickPollsDashboard />
+            </PrivateRoute>
+          } />
+          <Route path="/quick-polls/session/:sessionId" element={
+            <PrivateRoute allowedRoles={['Admin', 'Teacher', 'GuestTeacher']}>
+              <QuickPollsSession />
+            </PrivateRoute>
+          } />
+          <Route path="/quick-polls/join" element={<QuickPollsJoin />} />
+          <Route path="/quick-polls/view/:sessionId" element={<QuickPollsView />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </BrowserRouter>
