@@ -185,14 +185,30 @@ export default function DocDistributorDashboard() {
       }
 
       try {
-        const snap = await getDocs(collection(db, 'teachers'));
-        const users = snap.docs.map((entry) => {
+        const [teacherSnap, profileSnap] = await Promise.all([
+          getDocs(collection(db, 'teachers')),
+          getDocs(collection(db, 'TeacherProfile')),
+        ]);
+
+        const teacherMap = new Map();
+
+        teacherSnap.docs.forEach((entry) => {
           const data = entry.data();
-          const displayName = [data.firstName, data.lastName].filter(Boolean).join(' ') || entry.id;
-          return {
+          teacherMap.set(entry.id, {
             email: entry.id,
-            displayName,
-          };
+            displayName: [data.firstName, data.lastName].filter(Boolean).join(' ') || data.displayName || entry.id,
+          });
+        });
+
+        profileSnap.docs.forEach((entry) => {
+          const data = entry.data();
+          const email = entry.id;
+          const current = teacherMap.get(email) || { email };
+          teacherMap.set(email, {
+            ...current,
+            email,
+            displayName: data.displayName || current.displayName || email,
+          });
         });
 
         const currentUserEntry = {
@@ -200,7 +216,7 @@ export default function DocDistributorDashboard() {
           displayName: currentUser.displayName || currentUser.email.split('@')[0],
         };
 
-        const deduped = [currentUserEntry, ...users].filter(
+        const deduped = [currentUserEntry, ...teacherMap.values()].filter(
           (user, index, all) => all.findIndex((candidate) => candidate.email === user.email) === index
         );
 
