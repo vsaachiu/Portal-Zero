@@ -93,8 +93,10 @@ export default function DocDistributorDashboard() {
     return existing;
   }, [getTimestampMs]);
 
+  const effectiveUserEmail = isAdmin ? (selectedUserEmail || currentUser?.email) : currentUser?.email;
+
   const fetchData = useCallback(async () => {
-    const targetUserEmail = isAdmin ? (selectedUserEmail || currentUser?.email) : currentUser?.email;
+    const targetUserEmail = effectiveUserEmail;
     if (!targetUserEmail) return;
 
     try {
@@ -173,7 +175,7 @@ export default function DocDistributorDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser, choosePreferredFile, isAdmin, selectedUserEmail, showArchived]);
+  }, [choosePreferredFile, effectiveUserEmail, showArchived]);
 
   useEffect(() => {
     async function fetchTeacherUsers() {
@@ -204,8 +206,8 @@ export default function DocDistributorDashboard() {
 
         deduped.sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
         setTeacherUsers(deduped);
-        if (!selectedUserEmail) {
-          setSelectedUserEmail(currentUser.email);
+        if (!selectedUserEmail && deduped.length > 0) {
+          setSelectedUserEmail(deduped[0].email);
         }
       } catch (err) {
         console.error('Error loading teacher user list', err);
@@ -881,9 +883,27 @@ export default function DocDistributorDashboard() {
   
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
         <h1 className="text-3xl font-bold">Doc Distributor</h1>
-        <Link to="/" className="text-blue-600 hover:underline">Back to Dashboard</Link>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          {isAdmin && (
+            <label className="flex items-center gap-2 text-sm text-gray-700 bg-white border rounded px-3 py-2 shadow-sm">
+              <span>View as</span>
+              <select
+                className="border rounded px-2 py-1 bg-white"
+                value={selectedUserEmail || currentUser?.email || ''}
+                onChange={(event) => setSelectedUserEmail(event.target.value)}
+              >
+                {teacherUsers.map((user) => (
+                  <option key={user.email} value={user.email}>{user.displayName}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <Link to="/" className="text-blue-600 hover:underline">Back to Dashboard</Link>
+        </div>
       </div>
 
       {error && (
@@ -920,30 +940,14 @@ export default function DocDistributorDashboard() {
       {activeTab === 'folderSystems' && (
         <div>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
-            <div className="flex items-center gap-3 flex-wrap">
-              {isAdmin && (
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <span>View as</span>
-                  <select
-                    className="border rounded px-2 py-1"
-                    value={selectedUserEmail || currentUser?.email || ''}
-                    onChange={(event) => setSelectedUserEmail(event.target.value)}
-                  >
-                    {teacherUsers.map((user) => (
-                      <option key={user.email} value={user.email}>{user.displayName}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={showArchived}
-                  onChange={(event) => setShowArchived(event.target.checked)}
-                />
-                Show Archived
-              </label>
-            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(event) => setShowArchived(event.target.checked)}
+              />
+              Show Archived
+            </label>
             <Link to="/doc-distributor/create-system" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
               Create Folder System
             </Link>
