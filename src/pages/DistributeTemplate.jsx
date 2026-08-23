@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { getDriveToken, copyFile, addPermission, getFileMetadata } from '../driveApi';
 import { useDrivePicker } from '../useDrivePicker';
+import { logDdAudit } from '../ddAudit';
 
 export default function DistributeTemplate() {
   const { currentUser } = useAuth();
@@ -45,6 +46,7 @@ export default function DistributeTemplate() {
         querySnapshot.forEach((doc) => sysData.push({ id: doc.id, ...doc.data() }));
         setSystems(sysData);
       } catch (err) {
+        console.error(err);
         setError('Failed to fetch folder systems.');
       }
     }
@@ -89,6 +91,7 @@ export default function DistributeTemplate() {
       setStudents(studentDocs);
       setSelectedStudentEmails(validEmails);
     } catch (err) {
+      console.error(err);
       setError('Failed to load students.');
     }
     setLoading(false);
@@ -161,7 +164,22 @@ export default function DistributeTemplate() {
         distributionName: `${filePrefix} [Student] ${fileSuffix}`.trim(),
         permissionType,
         notifyUsers,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      await logDdAudit({
+        action: 'distribution_created',
+        actorEmail: currentUser.email,
+        targetType: 'distribution',
+        targetId: distributionId,
+        userEmail: currentUser.email,
+        relatedIds: [selectedSystemId, selectedSystem.setId],
+        metadata: {
+          systemId: selectedSystemId,
+          setId: selectedSystem.setId,
+          templateName,
+        },
       });
 
       // 2. Process each student

@@ -2,7 +2,17 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
-import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+  writeBatch,
+} from 'firebase/firestore';
 import {
   addSheetToSpreadsheet,
   createSpreadsheet,
@@ -14,6 +24,7 @@ import {
   writeSheetValues,
 } from '../driveApi';
 import { useDrivePicker } from '../useDrivePicker';
+import { logDdAudit } from '../ddAudit';
 
 export default function DocDistributorDashboard() {
   const [activeTab, setActiveTab] = useState('classes');
@@ -34,8 +45,12 @@ export default function DocDistributorDashboard() {
   const [exportError, setExportError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const { currentUser } = useAuth();
+  const [showArchived, setShowArchived] = useState(false);
+  const [selectedUserEmail, setSelectedUserEmail] = useState('');
+  const [teacherUsers, setTeacherUsers] = useState([]);
+  const { currentUser, systemRole } = useAuth();
   const { openPicker, isReady: isPickerReady } = useDrivePicker();
+  const isAdmin = systemRole === 'Admin';
 
   const OpenIcon = () => (
     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -79,12 +94,13 @@ export default function DocDistributorDashboard() {
   }, [getTimestampMs]);
 
   const fetchData = useCallback(async () => {
-    if (!currentUser?.email) return;
+    const targetUserEmail = isAdmin ? (selectedUserEmail || currentUser?.email) : currentUser?.email;
+    if (!targetUserEmail) return;
 
     try {
       const qSets = query(
         collection(db, 'sets'),
-        where('owner', '==', currentUser.email),
+        where('owner', '==', targetUserEmail),
         where('active', '==', true)
       );
       const setSnap = await getDocs(qSets);
@@ -92,13 +108,14 @@ export default function DocDistributorDashboard() {
       setSnap.forEach((s) => setData.push({ id: s.id, ...s.data() }));
       setSets(setData);
 
-      const qSystems = query(collection(db, 'dd_folder_systems'), where('teacherEmail', '==', currentUser.email));
+      const qSystems = query(collection(db, 'dd_folder_systems'), where('teacherEmail', '==', targetUserEmail));
       const sysSnap = await getDocs(qSystems);
       const sysData = [];
       sysSnap.forEach((s) => sysData.push({ id: s.id, ...s.data() }));
-      setSystems(sysData);
+      const visibleSystems = sysData.filter((system) => showArchived || system.archived !== true);
+      setSystems(visibleSystems);
 
-      const qDists = query(collection(db, 'dd_distributions'), where('teacherEmail', '==', currentUser.email));
+      const qDists = query(collection(db, 'dd_distributions'), where('teacherEmail', '==', targetUserEmail));
       const distSnap = await getDocs(qDists);
       const distData = [];
       distSnap.forEach((d) => distData.push({ id: d.id, ...d.data() }));
@@ -156,7 +173,47 @@ export default function DocDistributorDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser, choosePreferredFile]);
+  }, [currentUser, choosePreferredFile, isAdmin, selectedUserEmail, showArchived]);
+
+  useEffect(() => {
+    async function fetchTeacherUsers() {
+      if (!isAdmin || !currentUser?.email) {
+        setTeacherUsers([]);
+        return;
+      }
+
+      try {
+        const snap = await getDocs(collection(db, 'teachers'));
+        const users = snap.docs.map((entry) => {
+          const data = entry.data();
+          const displayName = [data.firstName, data.lastName].filter(Boolean).join(' ') || entry.id;
+          return {
+            email: entry.id,
+            displayName,
+          };
+        });
+
+        const currentUserEntry = {
+          email: currentUser.email,
+          displayName: currentUser.displayName || currentUser.email.split('@')[0],
+        };
+
+        const deduped = [currentUserEntry, ...users].filter(
+          (user, index, all) => all.findIndex((candidate) => candidate.email === user.email) === index
+        );
+
+        deduped.sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
+        setTeacherUsers(deduped);
+        if (!selectedUserEmail) {
+          setSelectedUserEmail(currentUser.email);
+        }
+      } catch (err) {
+        console.error('Error loading teacher user list', err);
+      }
+    }
+
+    fetchTeacherUsers();
+  }, [currentUser, isAdmin, selectedUserEmail]);
   
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -212,6 +269,119 @@ export default function DocDistributorDashboard() {
     const distributionKey = getDistributionKey(distribution);
     const byStudent = distributedFilesByDistribution[distributionKey] || {};
     return Object.values(byStudent);
+  };
+
+  const handleRenameSystem = async (systemId) => {
+    const system = systems.find((entry) => entry.id === systemId);
+    if (!system) return;
+
+    const nextName = window.prompt('Rename folder system', system.systemName || '');
+    if (nextName === null) return;
+
+    const trimmed = nextName.trim();
+    if (!trimmed) return;
+
+    try {
+      await updateDoc(doc(db, 'dd_folder_systems', systemId), {
+        systemName: trimmed,
+        updatedAt: serverTimestamp(),
+      });
+      await logDdAudit({
+        action: 'folder_system_renamed',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: system.teacherEmail || currentUser.email,
+        relatedIds: [system.setId],
+        metadata: {
+          oldName: system.systemName,
+          newName: trimmed,
+        },
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('Error renaming folder system', err);
+      setError(err.message || 'Failed to rename folder system.');
+    }
+  };
+
+  const handleArchiveSystem = async (systemId) => {
+    const system = systems.find((entry) => entry.id === systemId);
+    if (!system) return;
+
+    const nextArchived = !system.archived;
+
+    try {
+      await updateDoc(doc(db, 'dd_folder_systems', systemId), {
+        archived: nextArchived,
+        archivedAt: nextArchived ? serverTimestamp() : null,
+        updatedAt: serverTimestamp(),
+      });
+      await logDdAudit({
+        action: nextArchived ? 'folder_system_archived' : 'folder_system_unarchived',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: system.teacherEmail || currentUser.email,
+        relatedIds: [system.setId],
+        metadata: {
+          systemName: system.systemName,
+          archived: nextArchived,
+        },
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('Error updating folder system archive state', err);
+      setError(err.message || 'Failed to update folder system archive state.');
+    }
+  };
+
+  const handleDeleteSystem = async (systemId) => {
+    const system = systems.find((entry) => entry.id === systemId) || null;
+    if (!system) return;
+
+    const confirmed = window.confirm(
+      `Delete folder system "${system.systemName || 'Untitled'}"? This removes the related Firestore folders, distributions, and distributed files only. Google Drive folders/files will be left untouched.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const systemRef = doc(db, 'dd_folder_systems', systemId);
+      const folderSnap = await getDocs(query(collection(db, 'dd_student_folders'), where('systemId', '==', systemId)));
+      const distributionSnap = await getDocs(query(collection(db, 'dd_distributions'), where('systemId', '==', systemId)));
+      const batch = writeBatch(db);
+
+      folderSnap.forEach((entry) => batch.delete(entry.ref));
+
+      for (const distDoc of distributionSnap.docs) {
+        const distData = distDoc.data();
+        const distributionKey = distData.distributionId || distDoc.id;
+        const fileSnap = await getDocs(query(collection(db, 'dd_distributed_files'), where('distributionId', '==', distributionKey)));
+        fileSnap.forEach((fileDoc) => batch.delete(fileDoc.ref));
+        batch.delete(distDoc.ref);
+      }
+
+      batch.delete(systemRef);
+      await batch.commit();
+
+      await logDdAudit({
+        action: 'folder_system_deleted',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: system.teacherEmail || currentUser.email,
+        relatedIds: [system.setId, ...distributionSnap.docs.map((docEntry) => docEntry.id)],
+        metadata: {
+          setId: system.setId,
+          systemName: system.systemName,
+        },
+      });
+
+      await fetchData();
+    } catch (err) {
+      console.error('Error deleting folder system', err);
+      setError(err.message || 'Failed to delete folder system.');
+    }
   };
 
   const getFilesForSystem = (systemId) => {
@@ -749,11 +919,36 @@ export default function DocDistributorDashboard() {
 
       {activeTab === 'folderSystems' && (
         <div>
-          <div className="flex justify-end mb-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              {isAdmin && (
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <span>View as</span>
+                  <select
+                    className="border rounded px-2 py-1"
+                    value={selectedUserEmail || currentUser?.email || ''}
+                    onChange={(event) => setSelectedUserEmail(event.target.value)}
+                  >
+                    {teacherUsers.map((user) => (
+                      <option key={user.email} value={user.email}>{user.displayName}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(event) => setShowArchived(event.target.checked)}
+                />
+                Show Archived
+              </label>
+            </div>
             <Link to="/doc-distributor/create-system" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
               Create Folder System
             </Link>
           </div>
+
           {loading ? <p>Loading systems...</p> : (
             <div className="grid gap-4">
               {systems.length === 0 ? (
@@ -762,11 +957,40 @@ export default function DocDistributorDashboard() {
                 </div>
               ) : (
                 systems.map(sys => (
-                  <Link key={sys.id} to={`/doc-distributor/systems/${sys.id}`} className="bg-white p-4 rounded shadow hover:shadow-md block">
-                    <h3 className="font-bold text-lg">{sys.systemName}</h3>
-                    <p className="text-sm text-gray-600">Created: {sys.createdAt?.toDate().toLocaleDateString()}</p>
-                    {sys.isCentral && <span className="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded mt-2 inline-block">Central System</span>}
-                  </Link>
+                  <div key={sys.id} className={`bg-white p-4 rounded shadow ${sys.archived ? 'border-2 border-yellow-300 bg-yellow-50' : ''}`}>
+                    <div className="flex justify-between items-start gap-4">
+                      <Link to={`/doc-distributor/systems/${sys.id}`} className="flex-1 block">
+                        <h3 className="font-bold text-lg">{sys.systemName}</h3>
+                        <p className="text-sm text-gray-600">Created: {sys.createdAt?.toDate?.().toLocaleDateString?.() || '—'}</p>
+                        {sys.archived && <span className="bg-yellow-200 text-yellow-800 text-xs px-2 py-1 rounded mt-2 inline-block">Archived</span>}
+                        {sys.isCentral && <span className="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded mt-2 inline-block ml-2">Central System</span>}
+                      </Link>
+
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="px-3 py-1 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 text-sm"
+                          onClick={() => handleRenameSystem(sys.id)}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-1 rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200 text-sm"
+                          onClick={() => handleArchiveSystem(sys.id)}
+                        >
+                          {sys.archived ? 'Unarchive' : 'Archive'}
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 text-sm"
+                          onClick={() => handleDeleteSystem(sys.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 ))
               )}
             </div>

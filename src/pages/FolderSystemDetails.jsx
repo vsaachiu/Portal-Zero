@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { getDriveToken, getFileRevisionSummary } from '../driveApi';
+import { logDdAudit } from '../ddAudit';
 
 export default function FolderSystemDetails() {
   const { systemId } = useParams();
@@ -111,6 +112,113 @@ export default function FolderSystemDetails() {
     loadDetails();
   }, [systemId]);
 
+  const handleRenameSystem = async () => {
+    if (!system) return;
+
+    const nextName = window.prompt('Rename folder system', system.systemName || '');
+    if (nextName === null) return;
+
+    const trimmed = nextName.trim();
+    if (!trimmed) return;
+
+    try {
+      await updateDoc(doc(db, 'dd_folder_systems', systemId), {
+        systemName: trimmed,
+        updatedAt: serverTimestamp(),
+      });
+      await logDdAudit({
+        action: 'folder_system_renamed',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: system.teacherEmail || currentUser.email,
+        relatedIds: [system.setId],
+        metadata: {
+          oldName: system.systemName,
+          newName: trimmed,
+        },
+      });
+      setSystem((prev) => ({ ...prev, systemName: trimmed, updatedAt: new Date() }));
+    } catch (err) {
+      console.error('Error renaming folder system', err);
+      setError(err.message || 'Failed to rename folder system.');
+    }
+  };
+
+  const handleArchiveSystem = async () => {
+    if (!system) return;
+
+    const nextArchived = !system.archived;
+    try {
+      await updateDoc(doc(db, 'dd_folder_systems', systemId), {
+        archived: nextArchived,
+        archivedAt: nextArchived ? serverTimestamp() : null,
+        updatedAt: serverTimestamp(),
+      });
+      await logDdAudit({
+        action: nextArchived ? 'folder_system_archived' : 'folder_system_unarchived',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: system.teacherEmail || currentUser.email,
+        relatedIds: [system.setId],
+        metadata: {
+          systemName: system.systemName,
+          archived: nextArchived,
+        },
+      });
+      setSystem((prev) => ({ ...prev, archived: nextArchived, archivedAt: nextArchived ? new Date() : null }));
+    } catch (err) {
+      console.error('Error archiving folder system', err);
+      setError(err.message || 'Failed to update folder system archive state.');
+    }
+  };
+
+  const handleDeleteSystem = async () => {
+    if (!system) return;
+
+    const confirmed = window.confirm(
+      `Delete folder system "${system.systemName || 'Untitled'}"? This removes the related Firestore folders, distributions, and distributed files only. Google Drive folders/files will be left untouched.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const folderSnap = await getDocs(query(collection(db, 'dd_student_folders'), where('systemId', '==', systemId)));
+      const distributionSnap = await getDocs(query(collection(db, 'dd_distributions'), where('systemId', '==', systemId)));
+      const batch = writeBatch(db);
+
+      folderSnap.forEach((entry) => batch.delete(entry.ref));
+
+      for (const distributionDoc of distributionSnap.docs) {
+        const distributionKey = distributionDoc.data().distributionId || distributionDoc.id;
+        const fileSnap = await getDocs(query(collection(db, 'dd_distributed_files'), where('distributionId', '==', distributionKey)));
+        fileSnap.forEach((fileDoc) => batch.delete(fileDoc.ref));
+        batch.delete(distributionDoc.ref);
+      }
+
+      batch.delete(doc(db, 'dd_folder_systems', systemId));
+      await batch.commit();
+
+      await logDdAudit({
+        action: 'folder_system_deleted',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: system.teacherEmail || currentUser.email,
+        relatedIds: [system.setId, ...distributionSnap.docs.map((entry) => entry.id)],
+        metadata: {
+          setId: system.setId,
+          systemName: system.systemName,
+        },
+      });
+
+      window.location.href = '/doc-distributor';
+    } catch (err) {
+      console.error('Error deleting folder system', err);
+      setError(err.message || 'Failed to delete folder system.');
+    }
+  };
+
   const handleCheckEdits = async () => {
     const token = getDriveToken();
     if (!token) {
@@ -180,11 +288,18 @@ export default function FolderSystemDetails() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-6 flex justify-between items-center">
+      <div className="mb-6 flex justify-between items-start gap-4">
         <div>
           <Link to="/doc-distributor" className="text-blue-600 hover:underline mb-2 inline-block">&larr; Back to Systems</Link>
           <h1 className="text-3xl font-bold">{system?.systemName}</h1>
           <p className="text-gray-600">Root Folder: <a href={system?.rootFolderUrl} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Open in Drive</a></p>
+          {system?.archived && <span className="inline-block mt-2 bg-yellow-200 text-yellow-800 text-xs px-2 py-1 rounded">Archived</span>}
+        </div>
+
+        <div className="flex gap-2 shrink-0">
+          <button type="button" className="bg-gray-100 text-gray-700 px-3 py-2 rounded hover:bg-gray-200" onClick={handleRenameSystem}>Rename</button>
+          <button type="button" className="bg-yellow-100 text-yellow-800 px-3 py-2 rounded hover:bg-yellow-200" onClick={handleArchiveSystem}>{system?.archived ? 'Unarchive' : 'Archive'}</button>
+          <button type="button" className="bg-red-100 text-red-700 px-3 py-2 rounded hover:bg-red-200" onClick={handleDeleteSystem}>Delete</button>
         </div>
       </div>
 

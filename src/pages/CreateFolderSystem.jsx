@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { getDriveToken, createFolder, addPermission } from '../driveApi';
 import { useDrivePicker } from '../useDrivePicker';
+import { logDdAudit } from '../ddAudit';
 
 export default function CreateFolderSystem() {
-  const { currentUser, profile } = useAuth();
+  const { currentUser } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -132,13 +133,30 @@ export default function CreateFolderSystem() {
         systemName,
         teacherEmail: currentUser.email,
         isCentral: false,
+        archived: false,
+        archivedAt: null,
         rootFolderId: parsedRootId,
         rootFolderUrl: `https://drive.google.com/drive/folders/${parsedRootId}`,
         folderPrefix,
         folderSuffix,
         shareWithParents,
         notifyUsers,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      await logDdAudit({
+        action: 'folder_system_created',
+        actorEmail: currentUser.email,
+        targetType: 'folder_system',
+        targetId: systemId,
+        userEmail: currentUser.email,
+        relatedIds: [selectedSet],
+        metadata: {
+          setId: selectedSet,
+          systemName,
+          rootFolderId: parsedRootId,
+        },
       });
 
       // 2. Process each student

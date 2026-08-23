@@ -1,11 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { db } from '../firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { logDdAudit } from '../ddAudit';
 
 export default function DistributionDetails() {
   const { distributionId } = useParams();
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
   const [distribution, setDistribution] = useState(null);
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +41,42 @@ export default function DistributionDetails() {
     loadDetails();
   }, [distributionId]);
 
+  const handleDeleteDistribution = async () => {
+    if (!distribution) return;
+
+    const confirmed = window.confirm(
+      `Delete distribution "${distribution.templateName || 'Untitled'}"? This removes the distribution record and all related distributed file records from Firestore only. Google Drive files will be left untouched.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const batch = writeBatch(db);
+      const filesSnap = await getDocs(query(collection(db, 'dd_distributed_files'), where('distributionId', '==', distributionId)));
+      filesSnap.forEach((fileDoc) => batch.delete(fileDoc.ref));
+      batch.delete(doc(db, 'dd_distributions', distributionId));
+      await batch.commit();
+
+      await logDdAudit({
+        action: 'distribution_deleted',
+        actorEmail: currentUser?.email || null,
+        targetType: 'distribution',
+        targetId: distributionId,
+        userEmail: distribution.teacherEmail || currentUser?.email || null,
+        relatedIds: [distribution.systemId, distribution.setId].filter(Boolean),
+        metadata: {
+          systemId: distribution.systemId,
+          setId: distribution.setId,
+          templateName: distribution.templateName,
+        },
+      });
+
+      navigate('/doc-distributor');
+    } catch (err) {
+      console.error('Error deleting distribution', err);
+      setError(err.message || 'Failed to delete distribution.');
+    }
+  };
+
   if (loading) return <div className="p-8">Loading distribution details...</div>;
   if (error) return <div className="p-8 text-red-600">Error: {error}</div>;
 
@@ -46,7 +85,7 @@ export default function DistributionDetails() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-6 flex justify-between items-center">
+      <div className="mb-6 flex justify-between items-start gap-4">
         <div>
           <Link to="/doc-distributor" className="text-blue-600 hover:underline mb-2 inline-block">&larr; Back to Distributions</Link>
           <h1 className="text-3xl font-bold">{distribution?.templateName || 'Template'} Distribution</h1>
@@ -54,6 +93,13 @@ export default function DistributionDetails() {
             System ID: {distribution?.systemId} &bull; Date: {distribution?.createdAt?.toDate().toLocaleString()}
           </p>
         </div>
+        <button
+          type="button"
+          className="bg-red-100 text-red-700 px-3 py-2 rounded hover:bg-red-200"
+          onClick={handleDeleteDistribution}
+        >
+          Delete Distribution
+        </button>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-8">
