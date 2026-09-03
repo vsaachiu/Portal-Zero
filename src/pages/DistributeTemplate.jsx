@@ -188,6 +188,7 @@ export default function DistributeTemplate() {
         let status = 'success';
         let newFileId = '';
         let newFileUrl = '';
+        let errorMessage = null;
         try {
           const fileName = `${filePrefix ? filePrefix + ' ' : ''}${student.displayName}${fileSuffix ? ' ' + fileSuffix : ''}`.trim();
           
@@ -212,6 +213,7 @@ export default function DistributeTemplate() {
         } catch (studentErr) {
           console.error(`Failed for student ${student.email}`, studentErr);
           status = 'error';
+          errorMessage = studentErr.message || 'File creation failed';
         }
 
         // Save file record
@@ -221,7 +223,8 @@ export default function DistributeTemplate() {
           studentEmail: student.email,
           fileId: newFileId,
           fileUrl: newFileUrl,
-          status
+          status,
+          error: errorMessage
         });
 
         completed++;
