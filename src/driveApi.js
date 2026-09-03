@@ -237,6 +237,7 @@ export const getFileRevisionSummary = async (fileId, token) => {
   let pageToken;
   let revisionCount = 0;
   let latestRevision = null;
+  const revisionDates = [];
 
   do {
     const params = new URLSearchParams({
@@ -263,6 +264,11 @@ export const getFileRevisionSummary = async (fileId, token) => {
     const data = await response.json();
     const revisions = data.revisions || [];
     revisionCount += revisions.length;
+    revisionDates.push(...revisions.map((revision) => ({
+      modifiedTime: revision.modifiedTime,
+      editedBy: revision.lastModifyingUser?.displayName || null,
+      editedByEmail: revision.lastModifyingUser?.emailAddress || null,
+    })));
 
     for (const revision of revisions) {
       if (!latestRevision || new Date(revision.modifiedTime) > new Date(latestRevision.modifiedTime)) {
@@ -278,5 +284,6 @@ export const getFileRevisionSummary = async (fileId, token) => {
     lastEditedAt: latestRevision?.modifiedTime || null,
     lastEditedBy: latestRevision?.lastModifyingUser?.displayName || null,
     lastEditedByEmail: latestRevision?.lastModifyingUser?.emailAddress || null,
+    revisionDates,
   };
 };
