@@ -36,6 +36,8 @@ export default function DocDistributorDashboard() {
   const [distributedFilesByDistribution, setDistributedFilesByDistribution] = useState({});
   const [expandedSetModes, setExpandedSetModes] = useState({});
   const [expandedActivities, setExpandedActivities] = useState({});
+  const [activitySorts, setActivitySorts] = useState({});
+  const [activityDateRanges, setActivityDateRanges] = useState({});
   const [checkingActivityKey, setCheckingActivityKey] = useState(null);
   const [exportSetId, setExportSetId] = useState(null);
   const [exportMode, setExportMode] = useState('csv');
@@ -413,36 +415,122 @@ export default function DocDistributorDashboard() {
     return all;
   };
 
-  const getSystemStudentEdits = (systemId, email) => {
-    const files = getFilesForSystem(systemId).filter((f) => f.studentEmail === email && f.status === 'success');
-    if (files.length === 0) {
-      return {
-        revisionCount: null,
-        lastEditedAt: null,
-        lastEditedBy: null,
-      };
+  const getRevisionDates = (file) => {
+    if (Array.isArray(file?.revisionDates) && file.revisionDates.length > 0) {
+      return file.revisionDates
+        .map((revision) => ({
+          timestamp: getTimestampMs(revision.modifiedTime),
+          editedBy: revision.editedBy || revision.editedByEmail || null,
+        }))
+        .filter((revision) => revision.timestamp > 0);
     }
 
-    let revisionCount = 0;
-    let latestTs = 0;
-    let lastEditedAt = null;
-    let lastEditedBy = null;
+    const timestamp = getTimestampMs(file?.lastEditedAt);
+    return timestamp > 0
+      ? [{ timestamp, editedBy: file.lastEditedBy || file.lastEditedByEmail || null }]
+      : [];
+  };
 
-    files.forEach((file) => {
-      revisionCount += Number.isFinite(file.revisionCount) ? file.revisionCount : 0;
-      const ts = getTimestampMs(file.lastEditedAt);
-      if (ts > latestTs) {
-        latestTs = ts;
-        lastEditedAt = file.lastEditedAt;
-        lastEditedBy = file.lastEditedBy || file.lastEditedByEmail || null;
-      }
-    });
+  const getDateBounds = (files) => {
+    const timestamps = files.flatMap(getRevisionDates).map((revision) => revision.timestamp);
+    const today = new Date();
+    const todayDay = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const earliest = timestamps.length > 0 ? Math.min(...timestamps) : todayDay;
+    const earliestDate = new Date(earliest);
+    const earliestDay = Date.UTC(earliestDate.getUTCFullYear(), earliestDate.getUTCMonth(), earliestDate.getUTCDate());
+    return { earliestDay, todayDay };
+  };
 
+  const getActivityRange = (activityKey, files) => {
+    const bounds = getDateBounds(files);
+    const range = activityDateRanges[activityKey];
+    if (!range) return bounds;
     return {
-      revisionCount,
-      lastEditedAt,
-      lastEditedBy,
+      earliestDay: Math.max(bounds.earliestDay, Math.min(range.earliestDay, bounds.todayDay)),
+      todayDay: Math.min(bounds.todayDay, Math.max(range.todayDay, bounds.earliestDay)),
     };
+  };
+
+  const getStudentEdits = (files, email, range) => {
+    const edits = files
+      .filter((file) => file.studentEmail === email && file.status === 'success')
+      .flatMap((file) => getRevisionDates(file))
+      .filter((revision) => {
+        const date = new Date(revision.timestamp);
+        const day = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+        return day >= range.earliestDay && day <= range.todayDay;
+      });
+    const latest = edits.reduce((current, edit) => (!current || edit.timestamp > current.timestamp ? edit : current), null);
+    return {
+      revisionCount: edits.length,
+      lastEditedAt: latest?.timestamp || null,
+      lastEditedBy: latest?.editedBy || null,
+    };
+  };
+
+  const getSortValue = (row, sortBy) => {
+    if (sortBy === 'student') return row.displayName || row.email || '';
+    if (sortBy === 'edits') return row.edits.revisionCount ?? -1;
+    if (sortBy === 'lastEdit') return getTimestampMs(row.edits.lastEditedAt);
+    if (sortBy === 'lastEditedBy') return row.edits.lastEditedBy || '';
+    if (sortBy === 'file') return row.file?.fileUrl ? 1 : 0;
+    return '';
+  };
+
+  const toggleActivitySort = (activityKey, sortBy) => {
+    setActivitySorts((prev) => {
+      const current = prev[activityKey];
+      return {
+        ...prev,
+        [activityKey]: {
+          sortBy,
+          direction: current?.sortBy === sortBy && current.direction === 'asc' ? 'desc' : 'asc',
+        },
+      };
+    });
+  };
+
+  const renderSortableHeader = (activityKey, label, sortBy) => {
+    const sort = activitySorts[activityKey];
+    const active = sort?.sortBy === sortBy;
+    return (
+      <th className="py-2 px-2">
+        <button type="button" className="font-semibold hover:text-blue-600" onClick={() => toggleActivitySort(activityKey, sortBy)}>
+          {label} {active ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}
+        </button>
+      </th>
+    );
+  };
+
+  const renderActivityDateRange = (activityKey, files) => {
+    const bounds = getDateBounds(files);
+    const range = getActivityRange(activityKey, files);
+    const hasDates = files.some((file) => getRevisionDates(file).length > 0);
+    const formatDay = (day) => new Date(day).toLocaleDateString();
+    const updateRange = (key, value) => {
+      const numericValue = Number(value);
+      setActivityDateRanges((prev) => {
+        const current = prev[activityKey] || bounds;
+        const next = { ...current, [key]: numericValue };
+        if (next.earliestDay > next.todayDay) {
+          next[key === 'earliestDay' ? 'todayDay' : 'earliestDay'] = numericValue;
+        }
+        return { ...prev, [activityKey]: next };
+      });
+    };
+
+    return (
+      <div className="mb-3 rounded bg-gray-50 p-3 text-sm">
+        <div className="flex justify-between text-gray-600">
+          <span>Edit window: {formatDay(range.earliestDay)} - {formatDay(range.todayDay)}</span>
+          <span>{hasDates ? 'Move either handle to filter edits' : 'Check edits to enable date filtering'}</span>
+        </div>
+        <div className="flex items-center gap-3 mt-2">
+          <input type="range" min={bounds.earliestDay} max={bounds.todayDay} value={range.earliestDay} disabled={!hasDates || bounds.earliestDay === bounds.todayDay} onChange={(event) => updateRange('earliestDay', event.target.value)} className="w-full accent-blue-600" aria-label="Earliest edit date" />
+          <input type="range" min={bounds.earliestDay} max={bounds.todayDay} value={range.todayDay} disabled={!hasDates || bounds.earliestDay === bounds.todayDay} onChange={(event) => updateRange('todayDay', event.target.value)} className="w-full accent-blue-600" aria-label="Latest edit date" />
+        </div>
+      </div>
+    );
   };
 
   const runCheckEdits = async (activityKey, files) => {
@@ -468,6 +556,7 @@ export default function DocDistributorDashboard() {
             lastEditedByEmail: summary.lastEditedByEmail,
             revisionCheckStatus: 'success',
             revisionCheckError: null,
+            revisionDates: summary.revisionDates,
             editsCheckedAt: serverTimestamp(),
           });
         } catch (checkErr) {
@@ -763,24 +852,35 @@ export default function DocDistributorDashboard() {
 
                         {isExpanded && (
                           <div className="px-3 pb-3 overflow-x-auto">
+                            {renderActivityDateRange(activityKey, activityFiles)}
                             <table className="min-w-full text-left border-collapse">
                               <thead>
                                 <tr className="border-b">
-                                  <th className="py-2 px-2">Student</th>
+                                  {renderSortableHeader(activityKey, 'Student', 'student')}
                                   <th className="py-2 px-2">Folder</th>
-                                  <th className="py-2 px-2">Edits (All Files)</th>
-                                  <th className="py-2 px-2">Last Edit</th>
-                                  <th className="py-2 px-2">Last Edited By</th>
+                                  {renderSortableHeader(activityKey, 'Edits (All Files)', 'edits')}
+                                  {renderSortableHeader(activityKey, 'Last Edit', 'lastEdit')}
+                                  {renderSortableHeader(activityKey, 'Last Edited By', 'lastEditedBy')}
                                 </tr>
                               </thead>
                               <tbody>
                                 {members.map((email) => {
                                   const folder = studentFoldersBySystem[system.id]?.[email];
-                                  const edits = getSystemStudentEdits(system.id, email);
+                                  const edits = getStudentEdits(activityFiles, email, getActivityRange(activityKey, activityFiles));
+                                  return { email, displayName: studentsByEmail[email]?.displayName || email, edits, folder };
+                                }).sort((left, right) => {
+                                  const sort = activitySorts[activityKey] || { sortBy: 'student', direction: 'asc' };
+                                  const leftValue = getSortValue(left, sort.sortBy);
+                                  const rightValue = getSortValue(right, sort.sortBy);
+                                  const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+                                    ? leftValue - rightValue
+                                    : String(leftValue).localeCompare(String(rightValue));
+                                  return sort.direction === 'asc' ? comparison : -comparison;
+                                }).map(({ email, displayName, edits, folder }) => {
                                   return (
                                     <tr key={`${activityKey}-${email}`} className="border-b">
                                       <td className="py-2 px-2">
-                                        <div className="font-medium">{studentsByEmail[email]?.displayName || email}</div>
+                                        <div className="font-medium">{displayName}</div>
                                         <div className="text-xs text-gray-500">{email}</div>
                                       </td>
                                       <td className="py-2 px-2">
@@ -835,43 +935,49 @@ export default function DocDistributorDashboard() {
 
                         {isExpanded && (
                           <div className="px-3 pb-3 overflow-x-auto">
+                            {renderActivityDateRange(activityKey, distributionFiles)}
                             <table className="min-w-full text-left border-collapse">
                               <thead>
                                 <tr className="border-b">
-                                  <th className="py-2 px-2">Student</th>
-                                  <th className="py-2 px-2">Status</th>
-                                  <th className="py-2 px-2">Edits</th>
-                                  <th className="py-2 px-2">Last Edit</th>
-                                  <th className="py-2 px-2">Last Edited By</th>
-                                  <th className="py-2 px-2">File</th>
+                                  {renderSortableHeader(activityKey, 'Student', 'student')}
+                                  {renderSortableHeader(activityKey, 'Edits', 'edits')}
+                                  {renderSortableHeader(activityKey, 'Last Edit', 'lastEdit')}
+                                  {renderSortableHeader(activityKey, 'Last Edited By', 'lastEditedBy')}
+                                  {renderSortableHeader(activityKey, 'File', 'file')}
                                 </tr>
                               </thead>
                               <tbody>
                                 {members.map((email) => {
                                   const file = distributedFilesByDistribution[distributionKey]?.[email];
+                                  const edits = getStudentEdits(distributionFiles, email, getActivityRange(activityKey, distributionFiles));
+                                  return { email, displayName: studentsByEmail[email]?.displayName || email, file, edits };
+                                }).sort((left, right) => {
+                                  const sort = activitySorts[activityKey] || { sortBy: 'student', direction: 'asc' };
+                                  const leftValue = getSortValue(left, sort.sortBy);
+                                  const rightValue = getSortValue(right, sort.sortBy);
+                                  const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+                                    ? leftValue - rightValue
+                                    : String(leftValue).localeCompare(String(rightValue));
+                                  return sort.direction === 'asc' ? comparison : -comparison;
+                                }).map(({ email, displayName, file, edits }) => {
                                   return (
                                     <tr key={`${activityKey}-${email}`} className="border-b">
                                       <td className="py-2 px-2">
-                                        <div className="font-medium">{studentsByEmail[email]?.displayName || email}</div>
+                                        <div className="font-medium">{displayName}</div>
                                         <div className="text-xs text-gray-500">{email}</div>
                                       </td>
-                                      <td className="py-2 px-2">
-                                        {file?.status === 'success' ? (
-                                          <span className="text-green-600 font-medium">Success</span>
-                                        ) : file ? (
-                                          <span className="text-red-600 font-medium">Error</span>
-                                        ) : (
-                                          <span className="text-gray-400">Not Distributed</span>
-                                        )}
-                                      </td>
-                                      <td className="py-2 px-2">{Number.isFinite(file?.revisionCount) ? file.revisionCount : '-'}</td>
-                                      <td className="py-2 px-2">{file?.lastEditedAt ? new Date(file.lastEditedAt).toLocaleString() : '-'}</td>
-                                      <td className="py-2 px-2">{file?.lastEditedBy || file?.lastEditedByEmail || '-'}</td>
+                                      <td className="py-2 px-2">{Number.isFinite(edits.revisionCount) ? edits.revisionCount : '-'}</td>
+                                      <td className="py-2 px-2">{edits.lastEditedAt ? new Date(edits.lastEditedAt).toLocaleString() : '-'}</td>
+                                      <td className="py-2 px-2">{edits.lastEditedBy || '-'}</td>
                                       <td className="py-2 px-2">
                                         {file?.fileUrl && file.status === 'success' ? (
                                           <a href={file.fileUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Open</a>
+                                        ) : file?.status === 'error' ? (
+                                          <span className="text-red-600" title={file.error || file.distributionError || 'File creation failed'}>
+                                            {file.error || file.distributionError || 'File creation failed'}
+                                          </span>
                                         ) : (
-                                          <span className="text-gray-400">-</span>
+                                          <span className="text-gray-400">Not Distributed</span>
                                         )}
                                       </td>
                                     </tr>
