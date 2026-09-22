@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
+import { useAuth } from '../authContextValue';
 import { db } from '../firebase';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { getDriveToken, getFileRevisionSummary } from '../driveApi';

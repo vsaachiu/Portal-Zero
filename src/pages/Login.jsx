@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth, provider } from '../firebase';
-import { useAuth } from '../AuthContext';
+import { useAuth } from '../authContextValue';
 import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
