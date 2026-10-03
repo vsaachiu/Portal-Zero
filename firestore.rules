@@ -47,6 +47,37 @@ service cloud.firestore {
       allow read, write: if request.auth != null && (isAdmin() || request.auth.token.email.matches('.*@vsa\\.edu\\.hk$'));
     }
     
+    function isStaff() {
+      return request.auth != null && request.auth.token.email_verified == true &&
+             request.auth.token.email.matches('.*@vsa\\.edu\\.hk$');
+    }
+
+    function validContact() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'position', 'email', 'phone', 'organisationId', 'organisation', 'addedBy', 'dateAdded', 'notes', 'tags', 'visibility'])
+             && d.keys().hasAll(['name', 'addedBy', 'dateAdded', 'visibility'])
+             && d.name is string && d.name.size() > 0 && d.name.size() <= 200
+             && d.addedBy == request.auth.token.email
+             && d.visibility in ['private', 'shared']
+             && (!('notes' in d) || (d.notes is string && d.notes.size() <= 5000))
+             && (!('tags' in d) || (d.tags is list && d.tags.size() <= 20));
+    }
+
+    // Community Contacts: private contacts are only visible to their owner; shared ones to all staff.
+    match /cc_contacts/{contactId} {
+      allow read: if isStaff() && (resource.data.addedBy == request.auth.token.email || resource.data.visibility == 'shared' || isAdmin());
+      allow create: if isStaff() && validContact();
+      allow update: if isStaff() && resource.data.addedBy == request.auth.token.email && validContact();
+      allow delete: if isStaff() && (resource.data.addedBy == request.auth.token.email || isAdmin());
+    }
+
+    match /cc_organisations/{orgId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && request.resource.data.keys().hasOnly(['orgName', 'orgType', 'tag', 'createdBy'])
+                       && request.resource.data.createdBy == request.auth.token.email;
+      allow update, delete: if isStaff() && (resource.data.createdBy == request.auth.token.email || isAdmin());
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

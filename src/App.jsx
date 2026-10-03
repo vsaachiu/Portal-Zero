@@ -11,6 +11,7 @@ import CreateFolderSystem from './pages/CreateFolderSystem';
 import FolderSystemDetails from './pages/FolderSystemDetails';
 import DistributeTemplate from './pages/DistributeTemplate';
 import DistributionDetails from './pages/DistributionDetails';
+import Contacts from './pages/Contacts';
 
 const PrivateRoute = ({ children, allowedRoles }) => {
   const { currentUser, systemRole } = useAuth();
@@ -71,6 +72,11 @@ function App() {
           <Route path="/doc-distributor/distributions/:distributionId" element={
             <PrivateRoute allowedRoles={['Admin', 'Teacher', 'GuestTeacher']}>
               <DistributionDetails />
+            </PrivateRoute>
+          } />
+          <Route path="/contacts" element={
+            <PrivateRoute allowedRoles={['Admin', 'Teacher', 'GuestTeacher']}>
+              <Contacts />
             </PrivateRoute>
           } />
           <Route path="*" element={<Navigate to="/" />} />

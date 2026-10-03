@@ -42,6 +42,10 @@ export default function Dashboard() {
             <h3 className="text-xl font-bold text-blue-600 mb-2">Doc Distributor</h3>
             <p className="text-gray-600">Manage Google Drive folders and distribute templates to students.</p>
           </Link>
+          <Link to="/contacts" className="bg-white p-8 rounded-lg shadow border-t-4 border-blue-600 text-center hover:-translate-y-1 hover:shadow-md transition">
+            <h3 className="text-xl font-bold text-blue-600 mb-2">Community Contacts</h3>
+            <p className="text-gray-600">Shared database of external connections with the school.</p>
+          </Link>
         </div>
       </div>
     </div>
