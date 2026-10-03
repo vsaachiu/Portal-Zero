@@ -98,8 +98,8 @@ export default function Contacts() {
         await save({ ...empty, name: p.name || p.email.split('@')[0], email: p.email });
       }
       closeImport();
-      load();
     } catch (err) { console.error(err); setError('Could not add selected contacts.'); }
+    load();
   };
 
   const known = new Set(contacts.map((c) => c.email));

@@ -65,7 +65,7 @@ service cloud.firestore {
 
     // Community Contacts: private contacts are only visible to their owner; shared ones to all staff.
     match /cc_contacts/{contactId} {
-      allow read: if isStaff() && (resource.data.addedBy == request.auth.token.email || resource.data.visibility == 'shared' || isAdmin());
+      allow read: if isStaff() && (resource.data.addedBy == request.auth.token.email || resource.data.visibility == 'shared');
       allow create: if isStaff() && validContact();
       allow update: if isStaff() && resource.data.addedBy == request.auth.token.email && validContact();
       allow delete: if isStaff() && (resource.data.addedBy == request.auth.token.email || isAdmin());
@@ -74,7 +74,8 @@ service cloud.firestore {
     match /cc_organisations/{orgId} {
       allow read: if isStaff();
       allow create: if isStaff() && request.resource.data.keys().hasOnly(['orgName', 'orgType', 'tag', 'createdBy'])
-                       && request.resource.data.createdBy == request.auth.token.email;
+                       && request.resource.data.createdBy == request.auth.token.email
+                       && request.resource.data.orgName is string && request.resource.data.orgName.size() > 0 && request.resource.data.orgName.size() <= 200;
       allow update, delete: if isStaff() && (resource.data.createdBy == request.auth.token.email || isAdmin());
     }
 
