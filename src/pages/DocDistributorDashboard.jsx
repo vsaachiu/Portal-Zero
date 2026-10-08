@@ -285,6 +285,14 @@ export default function DocDistributorDashboard() {
 
   const getDistributionKey = (distribution) => distribution.distributionId || distribution.id;
 
+  const isMultiSetDistribution = (distribution) => (
+    Array.isArray(distribution?.batchSystemIds) && distribution.batchSystemIds.length > 1
+  );
+
+  const getDistributionSystemLabel = (distribution) => (
+    distribution?.systemName || distribution?.systemId || 'Unknown system'
+  );
+
   const getFilesForDistribution = (distribution) => {
     const distributionKey = getDistributionKey(distribution);
     const byStudent = distributedFilesByDistribution[distributionKey] || {};
@@ -767,7 +775,7 @@ export default function DocDistributorDashboard() {
                         {setDistributions.map((distribution) => (
                           <th key={`dist-col-${distribution.id}`} className="py-2 px-3">
                             <div className="text-sm font-semibold">{distribution.templateName || 'Template'}</div>
-                            <div className="text-xs text-gray-500">Distribution</div>
+                            <div className="text-xs text-gray-500">{isMultiSetDistribution(distribution) ? 'Multi-set run' : 'Distribution'}</div>
                           </th>
                         ))}
                       </tr>
@@ -914,7 +922,10 @@ export default function DocDistributorDashboard() {
                         <div className="p-3 flex items-center justify-between gap-3">
                           <div>
                             <p className="font-semibold">Distribution: {distribution.templateName || 'Template'}</p>
-                            <p className="text-xs text-gray-500">{distributionFiles.length} file records</p>
+                            <p className="text-xs text-gray-500">
+                              {distributionFiles.length} file records
+                              {isMultiSetDistribution(distribution) ? ' · Multi-set run' : ''}
+                            </p>
                           </div>
                           <div className="flex gap-2">
                             <button
@@ -1141,7 +1152,10 @@ export default function DocDistributorDashboard() {
                 distributions.map(dist => (
                   <Link key={dist.id} to={`/doc-distributor/distributions/${dist.id}`} className="bg-white p-4 rounded shadow hover:shadow-md block border-l-4 border-green-500">
                     <h3 className="font-bold">{dist.templateName || 'Untitled Template'}</h3>
-                    <p className="text-sm text-gray-600">Distributed to: {dist.systemId}</p>
+                    <p className="text-sm text-gray-600">
+                      Distributed to: {getDistributionSystemLabel(dist)}
+                      {isMultiSetDistribution(dist) ? ' · Multi-set run' : ''}
+                    </p>
                     <p className="text-xs text-gray-400 mt-1">{dist.createdAt?.toDate().toLocaleString()}</p>
                   </Link>
                 ))

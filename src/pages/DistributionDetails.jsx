@@ -11,6 +11,7 @@ export default function DistributionDetails() {
   const { currentUser } = useAuth();
   const [distribution, setDistribution] = useState(null);
   const [files, setFiles] = useState([]);
+  const [siblings, setSiblings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -21,7 +22,18 @@ export default function DistributionDetails() {
         const distRef = doc(db, 'dd_distributions', distributionId);
         const distSnap = await getDoc(distRef);
         if (!distSnap.exists()) throw new Error("Distribution not found");
-        setDistribution({ id: distSnap.id, ...distSnap.data() });
+        const distributionData = { id: distSnap.id, ...distSnap.data() };
+        setDistribution(distributionData);
+
+        if (distributionData.batchId) {
+          const siblingSnap = await getDocs(query(collection(db, 'dd_distributions'), where('batchId', '==', distributionData.batchId)));
+          const siblingData = [];
+          siblingSnap.forEach((siblingDoc) => siblingData.push({ id: siblingDoc.id, ...siblingDoc.data() }));
+          siblingData.sort((a, b) => (a.systemName || a.systemId || '').localeCompare(b.systemName || b.systemId || ''));
+          setSiblings(siblingData.filter((sibling) => sibling.id !== distributionData.id));
+        } else {
+          setSiblings([]);
+        }
 
         const qFiles = query(collection(db, 'dd_distributed_files'), where('distributionId', '==', distributionId));
         const fileSnap = await getDocs(qFiles);
@@ -44,8 +56,11 @@ export default function DistributionDetails() {
   const handleDeleteDistribution = async () => {
     if (!distribution) return;
 
+    const multiSet = Array.isArray(distribution.batchSystemIds) && distribution.batchSystemIds.length > 1;
     const confirmed = window.confirm(
-      `Delete distribution "${distribution.templateName || 'Untitled'}"? This removes the distribution record and all related distributed file records from Firestore only. Google Drive files will be left untouched.`
+      multiSet
+        ? `Delete distribution "${distribution.templateName || 'Untitled'}" for ${distribution.systemName || distribution.systemId}? This removes only this folder system's distribution record and file records from Firestore. Other folder systems in the same run are kept. Google Drive files will be left untouched.`
+        : `Delete distribution "${distribution.templateName || 'Untitled'}"? This removes the distribution record and all related distributed file records from Firestore only. Google Drive files will be left untouched.`
     );
     if (!confirmed) return;
 
@@ -62,11 +77,12 @@ export default function DistributionDetails() {
         targetType: 'distribution',
         targetId: distributionId,
         userEmail: distribution.teacherEmail || currentUser?.email || null,
-        relatedIds: [distribution.systemId, distribution.setId].filter(Boolean),
+        relatedIds: [distribution.systemId, distribution.setId, distribution.batchId].filter(Boolean),
         metadata: {
           systemId: distribution.systemId,
           setId: distribution.setId,
           templateName: distribution.templateName,
+          batchId: distribution.batchId || null,
         },
       });
 
@@ -90,7 +106,7 @@ export default function DistributionDetails() {
           <Link to="/doc-distributor" className="text-blue-600 hover:underline mb-2 inline-block">&larr; Back to Distributions</Link>
           <h1 className="text-3xl font-bold">{distribution?.templateName || 'Template'} Distribution</h1>
           <p className="text-gray-600">
-            System ID: {distribution?.systemId} &bull; Date: {distribution?.createdAt?.toDate().toLocaleString()}
+            Folder system: {distribution?.systemName || distribution?.systemId} &bull; Date: {distribution?.createdAt?.toDate?.().toLocaleString() || 'Unknown'}
           </p>
         </div>
         <button
@@ -101,6 +117,26 @@ export default function DistributionDetails() {
           Delete Distribution
         </button>
       </div>
+
+      {(Array.isArray(distribution?.batchSystemIds) && distribution.batchSystemIds.length > 1) && (
+        <div className="bg-white p-4 rounded shadow mb-8">
+          <h2 className="font-bold mb-2">Multi-set run</h2>
+          {siblings.length === 0 ? (
+            <p className="text-sm text-gray-500">Other folder systems from this run are no longer listed.</p>
+          ) : (
+            <ul className="text-sm space-y-1">
+              {siblings.map((sibling) => (
+                <li key={sibling.id}>
+                  <Link to={`/doc-distributor/distributions/${sibling.id}`} className="text-blue-600 hover:underline">
+                    {sibling.systemName || sibling.systemId}
+                  </Link>
+                  {sibling.setName ? <span className="text-gray-500"> · {sibling.setName}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="bg-white p-4 rounded shadow text-center">
